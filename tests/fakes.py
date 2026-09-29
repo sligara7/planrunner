@@ -1,5 +1,6 @@
 """Test doubles that satisfy planrunner's protocols."""
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,6 +20,8 @@ class FakeConsoleMonitor:
 
     def next_msg(self, timeout: float | None = None) -> JSON:
         if not self.messages:
+            if timeout:
+                time.sleep(timeout)
             raise TimeoutError("no message")
         return self.messages.pop(0)
 

@@ -125,13 +125,17 @@ class PollingStatusFeed:
 
 
 class ConsoleFeed:
-    """Streams the RE worker's console output as ``ConsoleText`` events."""
+    """Streams the RE worker's console output as ``ConsoleText`` events.
 
-    def __init__(self, bus: EventPublisher, wait: float = 0.2) -> None:
+    Each pass waits up to ``wait`` seconds for output, drains whatever else is
+    buffered, publishes it as one event, then rests for ``period`` seconds.
+    """
+
+    def __init__(self, bus: EventPublisher, wait: float = 0.2, period: float = 0.1) -> None:
         self._bus = bus
         self._wait = wait
         self._api: QueueServerAPI | None = None
-        self._loop = _BackgroundLoop("planrunner-console", self.read_once, period=0)
+        self._loop = _BackgroundLoop("planrunner-console", self.read_once, period)
 
     def start(self, api: QueueServerAPI) -> None:
         self.stop()
@@ -149,10 +153,16 @@ class ConsoleFeed:
             self._api = None
 
     def read_once(self, api: QueueServerAPI) -> None:
-        """Wait briefly for one console message and publish it."""
-        try:
-            msg = api.console_monitor.next_msg(timeout=self._wait)
-        except Exception:
-            return  # timeout: nothing new
-        if text := msg.get("msg", ""):
+        """Publish everything the console monitor has buffered (one event per pass)."""
+        monitor = api.console_monitor
+        chunks: list[str] = []
+        timeout: float | None = self._wait
+        while True:
+            try:
+                msg = monitor.next_msg(timeout=timeout)
+            except Exception:
+                break  # nothing (more) buffered
+            chunks.append(msg.get("msg", ""))
+            timeout = None  # after the first message, only take what is already there
+        if text := "".join(chunks):
             self._bus.publish(ConsoleText(text))

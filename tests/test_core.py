@@ -151,12 +151,12 @@ def test_status_feed_is_read_only():
 
 def test_console_feed_publishes_messages():
     server = FakeQueueServer()
-    server.monitor.messages = [{"time": 1.0, "msg": "hello\n"}]
+    server.monitor.messages = [{"time": 1.0, "msg": "hello\n"}, {"time": 1.1, "msg": "world\n"}]
     bus = RecordingBus()
-    feed = ConsoleFeed(bus)
+    feed = ConsoleFeed(bus, wait=0.01)
     feed.read_once(server)
     feed.read_once(server)  # nothing left: a timeout, not an event
-    assert bus.of_type(ConsoleText) == [ConsoleText("hello\n")]
+    assert bus.of_type(ConsoleText) == [ConsoleText("hello\nworld\n")]
 
 
 def test_console_feed_start_stop_toggles_monitor():
