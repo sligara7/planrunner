@@ -1,7 +1,7 @@
 # Mirrors bsqs/templates/bluesky-httpserver-config.yml.j2 (NSLS-II Ansible role).
 qserver_zmq_configuration:
-  control_address: ipc://@RUN_DIR@/bsqs-ctrl.sock
-  info_address: ipc://@RUN_DIR@/bsqs-info.sock
+  control_address: ipc://@SOCK_DIR@/bsqs-ctrl.sock
+  info_address: ipc://@SOCK_DIR@/bsqs-info.sock
 
 authentication:
   allow_anonymous_access: True

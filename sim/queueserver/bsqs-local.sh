@@ -23,6 +23,9 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../.." && pwd)"
 RUN_DIR="${RUN_DIR:-$repo_root/.bsqs-local}"
+# ZMQ ipc sockets need a path under 108 characters, which a deep checkout can exceed:
+# keep them in a short directory, one per checkout.
+SOCK_DIR="${SOCK_DIR:-${XDG_RUNTIME_DIR:-/tmp}/bsqs-$(printf %s "$RUN_DIR" | md5sum | cut -c1-8)}"
 PROFILE_REPO="${PROFILE_REPO:-$HOME/git_projects/hex-ob/hex-profile-collection}"
 SIM_ENV="${SIM_ENV:-$HOME/git_projects/hex-ob/hex-simulated-beamline/scripts/env.sh}"
 API_KEY="${API_KEY:-planrunnerdev}"
@@ -33,7 +36,7 @@ QS=(pixi run --frozen --manifest-path "$PROFILE_REPO/pixi.toml" --environment qs
 say() { echo "[bsqs-local] $*"; }
 
 render() {  # render TEMPLATE OUTPUT STARTUP_DIR
-    sed -e "s|@RUN_DIR@|$RUN_DIR|g" -e "s|@REDIS_PORT@|$REDIS_PORT|g" \
+    sed -e "s|@RUN_DIR@|$RUN_DIR|g" -e "s|@SOCK_DIR@|$SOCK_DIR|g" -e "s|@REDIS_PORT@|$REDIS_PORT|g" \
         -e "s|@STARTUP_DIR@|$3|g" "$1" > "$2"
 }
 
@@ -48,7 +51,7 @@ running() { [ -f "$RUN_DIR/$1.pid" ] && kill -0 "$(cat "$RUN_DIR/$1.pid")" 2>/de
 
 up() {
     local profile=${1:-builtin} startup_dir
-    mkdir -p "$RUN_DIR"
+    mkdir -p "$RUN_DIR" "$SOCK_DIR"
     case $profile in
         builtin)
             # A private copy, so the worker's plan-list rewrite never touches site-packages.

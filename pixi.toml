@@ -28,6 +28,7 @@ hex = "planrunner --server https://xf27id1-hex-qs1.nsls2.bnl.gov:443 --connect"
 sim-up = "sim/sim.sh up"
 sim-down = "sim/sim.sh down"
 sim-status = "sim/sim.sh status"
+sim-prune = "sim/hex/scripts/prune_sim_data.sh --yes"
 sim-planrunner = "planrunner --server http://localhost:60610 --api-key planrunnerdev --connect"
 
 [feature.test.tasks]

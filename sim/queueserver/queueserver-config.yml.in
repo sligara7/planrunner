@@ -1,8 +1,8 @@
 # Mirrors bsqs/templates/bluesky-queueserver-config.yml.j2 (NSLS-II Ansible role),
 # with local paths. @VARS@ are filled in by bsqs-local.sh.
 network:
-  zmq_control_addr: "ipc://@RUN_DIR@/bsqs-ctrl.sock"
-  zmq_info_addr: "ipc://@RUN_DIR@/bsqs-info.sock"
+  zmq_control_addr: "ipc://@SOCK_DIR@/bsqs-ctrl.sock"
+  zmq_info_addr: "ipc://@SOCK_DIR@/bsqs-info.sock"
   zmq_publish_console: true
   redis_addr: "localhost:@REDIS_PORT@"
 startup:

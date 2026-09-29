@@ -42,6 +42,13 @@ you get the read-only view an operator without the key would see.
 4. Starts Redis, RE Manager and bluesky-httpserver (`queueserver/bsqs-local.sh up hex`),
    with the API key `planrunnerdev`.
 
+**Disk use.** The simulated cameras write real HDF5 files of zero-valued frames to
+`/tmp/hex-sim-data`. Recording on the simulated Phantom writes nothing; downloading a
+cine does, at about 130 MB/s, and a full cine is about 16 GB. A watchdog caps the
+directory at **20 GB**. Past the cap it turns detector file writing off, so scans fail
+loudly instead of filling the disk. Clear space with `pixi run sim-prune`, or change the
+cap with `HEX_SIM_DATA_CAP_GB=<GB> pixi run sim-up`.
+
 Logs: `.bsqs-local/*.log` (queueserver), `/tmp/hex-*.log` (sim host processes),
 `docker logs hexsim-<name>` (containers).
 

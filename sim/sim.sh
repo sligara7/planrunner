@@ -16,7 +16,8 @@
 #      HEX profile against the sim
 # Then run planrunner against it with:  pixi run sim-planrunner
 #
-# Everything binds to 127.0.0.1. Sim data goes to /tmp/hex-sim-data (see sim/hex/README.md).
+# Everything binds to 127.0.0.1. Sim data goes to /tmp/hex-sim-data, capped at
+# HEX_SIM_DATA_CAP_GB (default 20): past it, a watchdog turns detector file writing off.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,13 +62,35 @@ fetch_profile() {
     pixi install --frozen --manifest-path "$PROFILE_DIR/pixi.toml" -e qs
 }
 
+watchdog_script="$repo/sim/hex/scripts/data_watchdog.py"
+toolpy="$repo/.pixi/envs/simtools/bin/python"
+
+check_disk() {
+    # Refuse to start while the sim data is over its cap (see data_watchdog.py).
+    if [ -x "$toolpy" ] && ! "$toolpy" "$watchdog_script" --check; then
+        die "simulated detector data is over its cap. Clear it with: pixi run sim-prune
+       (or raise the cap: HEX_SIM_DATA_CAP_GB=<GB> pixi run sim-up)"
+    fi
+}
+
+start_watchdog() {
+    if ! pgrep -f "$watchdog_script" >/dev/null; then
+        # shellcheck disable=SC1091
+        (source "$repo/sim/hex/scripts/env.sh" \
+            && nohup "$toolpy" -u "$watchdog_script" > /tmp/hex-data-watchdog.log 2>&1 &)
+        say "data watchdog started (cap ${HEX_SIM_DATA_CAP_GB:-20} GB, log /tmp/hex-data-watchdog.log)"
+    fi
+}
+
 up() {
     preflight
+    check_disk
     fetch_profile
     say "planrunner's simtools environment..."
     pixi install --manifest-path "$repo/pixi.toml" -e simtools
     "$repo/sim/hex/images/build.sh"
     HEX_PROFILE_MANIFEST="$PROFILE_DIR/pixi.toml" "$repo/sim/hex/scripts/up_all.sh"
+    start_watchdog
     PROFILE_REPO="$PROFILE_DIR" SIM_ENV="$repo/sim/hex/scripts/env.sh" \
         "$repo/sim/queueserver/bsqs-local.sh" up hex
     cat <<EOF
@@ -88,6 +111,7 @@ host_processes=(
     "$repo/sim/hex/iocs/panda/motor_encoder_bridge.py"
     "$repo/sim/hex/iocs/panda/ttl_trigger_bridge.py"
     "$repo/sim/hex/iocs/sim_ioc.py"
+    "$repo/sim/hex/scripts/data_watchdog.py"
 )
 
 down() {
