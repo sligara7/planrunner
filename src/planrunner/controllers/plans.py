@@ -10,6 +10,7 @@ from planrunner.events import (
     Disconnected,
     EditItemRequested,
     Notice,
+    PermissionsKnown,
 )
 from planrunner.plan_params import (
     Catalog,
@@ -68,6 +69,10 @@ class PlanFormView(Protocol):
 
     def show_errors(self, errors: dict[str, str]) -> None: ...
 
+    def enable_submit(self, add: bool, run_now: bool) -> None:
+        """Enable Add to queue / Save changes (``add``) and Run now (``run_now``)."""
+        ...
+
     def set_edit_mode(self, editing: str | None) -> None:
         """Show the 'save changes' buttons for the named item, or the normal ones for None."""
         ...
@@ -111,6 +116,8 @@ class PlansController:
         bus.subscribe(AllowedChanged, lambda _: self._load_allowed())
         bus.subscribe(Disconnected, lambda _: self._reset())
         bus.subscribe(EditItemRequested, lambda event: self._start_edit(event.item))
+        bus.subscribe(PermissionsKnown, lambda event: form.enable_submit(
+            add=event.allowed.edit_queue, run_now=event.allowed.execute))
 
     # --- Handlers ---------------------------------------------------------------
 
@@ -244,3 +251,4 @@ class PlansController:
         self._state = _State(remembered=self._state.remembered)
         self._list.show_plans([], None)
         self._form.clear("Connect to a server to see its plans.")
+        self._form.enable_submit(add=True, run_now=True)

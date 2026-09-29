@@ -8,9 +8,11 @@ from planrunner.events import (
     Disconnected,
     EditItemRequested,
     HistoryUpdated,
+    PermissionsKnown,
     QueueUpdated,
     StatusUpdated,
 )
+from planrunner.permissions import Permissions
 from planrunner.protocols import JSON, Dialogs, EventPublisher, EventSubscriber
 from planrunner.status_text import (
     Controls,
@@ -112,12 +114,15 @@ class QueueController:
         self._running: JSON | None = None
         self._items: list[JSON] = []
         self._history: list[JSON] = []
+        self._status: JSON | None = None
+        self._allowed = Permissions.full()
 
         view.set_handlers(self)
         view.enable_controls(Controls(), has_queue=False)
         bus.subscribe(QueueUpdated, self._on_queue)
         bus.subscribe(HistoryUpdated, self._on_history)
         bus.subscribe(StatusUpdated, self._on_status)
+        bus.subscribe(PermissionsKnown, self._on_permissions)
         bus.subscribe(Disconnected, lambda _: self._on_disconnected())
 
     # --- Queue control ----------------------------------------------------------
@@ -245,11 +250,22 @@ class QueueController:
         self._view.show_history(list(reversed(rows)))  # newest first
 
     def _on_status(self, event: StatusUpdated) -> None:
-        self._view.enable_controls(controls_for(event.status), has_queue=bool(self._items))
+        self._status = event.status
+        self._refresh_controls()
         self._view.show_loop(bool((event.status.get("plan_queue_mode") or {}).get("loop")))
+
+    def _on_permissions(self, event: PermissionsKnown) -> None:
+        self._allowed = event.allowed
+        self._refresh_controls()
+
+    def _refresh_controls(self) -> None:
+        self._view.enable_controls(
+            controls_for(self._status, self._allowed), has_queue=bool(self._items)
+        )
 
     def _on_disconnected(self) -> None:
         self._running, self._items, self._history = None, [], []
+        self._status, self._allowed = None, Permissions.full()
         self._view.show_queue([])
         self._view.show_history([])
         self._view.enable_controls(Controls(), has_queue=False)

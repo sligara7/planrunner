@@ -16,6 +16,7 @@ from planrunner.controllers.console import ConsoleController
 from planrunner.controllers.plans import PlansController
 from planrunner.controllers.queue import QueueController
 from planrunner.controllers.status import StatusController
+from planrunner.credentials import KeyFinder, default_key_finder
 from planrunner.dispatch import QueueDispatcher
 from planrunner.events import EventBus
 from planrunner.feeds import ConsoleFeed, PollingStatusFeed
@@ -36,7 +37,12 @@ class AppOptions:
 
 
 class App:
-    def __init__(self, options: AppOptions, api_factory: ApiFactory = make_http_api) -> None:
+    def __init__(
+        self,
+        options: AppOptions,
+        api_factory: ApiFactory = make_http_api,
+        keys: KeyFinder | None = None,
+    ) -> None:
         dispatcher = QueueDispatcher()
         bus = EventBus(dispatcher)
         config = JsonConfigStore(options.config_path)
@@ -57,6 +63,7 @@ class App:
         self.connection = ConnectionController(
             view=window.connection_bar, connector=self.client, commands=commands,
             feeds=self.feeds, bus=bus, dialogs=dialogs, config=config,
+            keys=keys or default_key_finder(),
         )
         self.plans = PlansController(
             plan_list=window.plan_list, form=window.plan_form, commands=commands, bus=bus,

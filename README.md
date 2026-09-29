@@ -18,6 +18,27 @@ pixi run planrunner --server http://localhost:60610 --api-key <key> --connect
 `--server` defaults to `$QSERVER_HTTP_SERVER_URI` or the last server you used; `--api-key`
 defaults to `$QSERVER_HTTP_SERVER_API_KEY`.
 
+## Deploy on a beamline workstation
+
+planrunner runs from a clone of this repository with its own pixi environment:
+
+```bash
+git clone <this repo> ~/planrunner && cd ~/planrunner
+pixi install
+pixi run hex          # HEX: --server https://xf27id1-hex-qs1.nsls2.bnl.gov:443 --connect
+```
+
+**API key.** The NSLS-II `bsqs` Ansible role already deploys the queueserver's API key to
+the workstations it lists as clients. planrunner looks for it, in order:
+
+1. `/etc/qs_client/<queueserver hostname>`, which is readable only by the beamline operator account
+2. `$QSERVER_HTTP_SERVER_API_KEY`, which the role exports from `/etc/profile.d/`
+3. a key typed into the connection bar (a typed key always wins)
+
+The key is never written to planrunner's settings file. Without a key, planrunner connects
+**read only**: status, queue, history and console all work, and every control that would
+change something is greyed out. That makes it usable as a monitor anywhere.
+
 ## The window
 
 Same layout as ScriptRunner, with the server in place of the script folder:

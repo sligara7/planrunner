@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from planrunner.permissions import Permissions
 from planrunner.protocols import JSON, Dispatcher, QueueServerAPI
 
 # --- Connection ---------------------------------------------------------------
@@ -25,6 +26,13 @@ class Connected:
 @dataclass(frozen=True, slots=True)
 class Disconnected:
     uri: str
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionsKnown:
+    """What the connected user may do; published once per connection."""
+
+    allowed: Permissions
 
 
 @dataclass(frozen=True, slots=True)

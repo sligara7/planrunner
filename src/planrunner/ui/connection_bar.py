@@ -38,13 +38,15 @@ class ConnectionBar:
         self._disconnect.grid(row=0, column=5, padx=(0, 5), pady=5)
         self._indicator = ttk.Label(self.frame, width=15)
         self._indicator.grid(row=0, column=6, padx=5, pady=5)
+        self._access = ttk.Label(self.frame, width=14)
+        self._access.grid(row=0, column=7, padx=(0, 5), pady=5)
 
-        ttk.Separator(self.frame, orient="vertical").grid(row=0, column=7, sticky="ns", padx=5)
-        ttk.Label(self.frame, text="Environment:").grid(row=0, column=8, padx=5, pady=5)
+        ttk.Separator(self.frame, orient="vertical").grid(row=0, column=8, sticky="ns", padx=5)
+        ttk.Label(self.frame, text="Environment:").grid(row=0, column=9, padx=5, pady=5)
         self._open_env = ttk.Button(self.frame, text="Open")
-        self._open_env.grid(row=0, column=9, padx=(0, 5), pady=5)
+        self._open_env.grid(row=0, column=10, padx=(0, 5), pady=5)
         self._close_env = ttk.Button(self.frame, text="Close")
-        self._close_env.grid(row=0, column=10, padx=(0, 5), pady=5)
+        self._close_env.grid(row=0, column=11, padx=(0, 5), pady=5)
 
     def set_handlers(self, handlers: ConnectionHandlers) -> None:
         self._connect.configure(command=handlers.on_connect)
@@ -65,6 +67,11 @@ class ConnectionBar:
         self._indicator.configure(text=text, style=f"{tone.value}.Status.TLabel")
         set_enabled(self._connect, state != "connecting")
         set_enabled(self._disconnect, state in ("connected", "unreachable"))
+
+    def show_access(self, text: str) -> None:
+        tone = Tone.WARN if text == "read only" else Tone.NORMAL
+        label = f"({text})" if text else ""
+        self._access.configure(text=label, style=f"{tone.value}.Status.TLabel")
 
     def enable_environment_buttons(self, can_open: bool, can_close: bool) -> None:
         set_enabled(self._open_env, can_open)

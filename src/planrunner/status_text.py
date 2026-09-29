@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from planrunner.permissions import Permissions
 from planrunner.protocols import JSON
 
 
@@ -44,30 +45,39 @@ class Controls:
     run_now: bool = False
     open_environment: bool = False
     close_environment: bool = False
+    edit_queue: bool = False
+    set_loop: bool = False
 
 
-def controls_for(status: JSON | None) -> Controls:
-    """The commands to enable for ``status`` (``None`` means not connected)."""
+def controls_for(status: JSON | None, allowed: Permissions | None = None) -> Controls:
+    """The commands to enable in this state, for a user with these permissions.
+
+    ``status`` is ``None`` when not connected; ``allowed`` defaults to everything.
+    """
     if not status:
         return Controls()
+    allowed = allowed or Permissions.full()
     state = status.get("manager_state", "")
     env = bool(status.get("worker_environment_exists"))
     running = state in ("executing_queue", "executing_task")
     paused = state == "paused"
     stop_pending = bool(status.get("queue_stop_pending"))
     idle = state == "idle"
+    queue, plan, manager = allowed.control_queue, allowed.control_plan, allowed.control_manager
     return Controls(
-        start=idle and env and status.get("items_in_queue", 0) > 0,
-        stop_after_current=state == "executing_queue" and not stop_pending,
-        cancel_stop=state == "executing_queue" and stop_pending,
-        pause=running and not status.get("pause_pending"),
-        resume=paused,
-        stop_run=paused,
-        abort=paused,
-        halt=paused,
-        run_now=idle and env,
-        open_environment=idle and not env,
-        close_environment=idle and env,
+        start=queue and idle and env and status.get("items_in_queue", 0) > 0,
+        stop_after_current=queue and state == "executing_queue" and not stop_pending,
+        cancel_stop=queue and state == "executing_queue" and stop_pending,
+        pause=plan and running and not status.get("pause_pending"),
+        resume=plan and paused,
+        stop_run=plan and paused,
+        abort=plan and paused,
+        halt=plan and paused,
+        run_now=allowed.execute and idle and env,
+        open_environment=manager and idle and not env,
+        close_environment=manager and idle and env,
+        edit_queue=allowed.edit_queue,
+        set_loop=queue,
     )
 
 
@@ -102,6 +112,9 @@ def status_fields(status: JSON | None, reachable: bool = True) -> list[StatusFie
         fields.append(StatusField("Stop", "after current plan", Tone.WARN))
     if status.get("pause_pending"):
         fields.append(StatusField("Pause", "pending", Tone.WARN))
+    lock = status.get("lock") or {}
+    if locked := [name for name in ("environment", "queue") if lock.get(name)]:
+        fields.append(StatusField("Locked", " + ".join(locked), Tone.BAD))
     return fields
 
 

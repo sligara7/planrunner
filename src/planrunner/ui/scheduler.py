@@ -163,10 +163,17 @@ class SchedulerPanel:
             "stop_run": controls.stop_run,
             "abort": controls.abort,
             "halt": controls.halt,
-            "clear": has_queue,
+            "clear": controls.edit_queue and has_queue,
+            "move_up": controls.edit_queue,
+            "move_down": controls.edit_queue,
+            "edit": controls.edit_queue,
+            "duplicate": controls.edit_queue,
+            "delete": controls.edit_queue,
+            "requeue": controls.edit_queue,
         }
         for key, on in enabled.items():
             set_enabled(self._buttons[key], on)
+        set_enabled(self._loop_check, controls.set_loop)
 
     def show_loop(self, loop: bool) -> None:
         self._loop.set(loop)

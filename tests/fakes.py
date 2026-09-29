@@ -35,6 +35,8 @@ class FakeQueueServer:
     history_reply: JSON = field(default_factory=lambda: {"items": []})
     plans: JSON = field(default_factory=dict)
     devices: JSON = field(default_factory=dict)
+    scopes: list[str] | None = None
+    """None: the server grants everything (as a test default)."""
     fail_with: Exception | None = None
     calls: list[tuple[str, tuple, dict]] = field(default_factory=list)
     monitor: FakeConsoleMonitor = field(default_factory=FakeConsoleMonitor)
@@ -55,6 +57,14 @@ class FakeQueueServer:
     def status(self, *, reload: bool = False) -> JSON:
         self._record("status")
         return dict(self.status_reply)
+
+    def api_scopes(self) -> JSON:
+        self._record("api_scopes")
+        if self.scopes is None:
+            return {"roles": ["unauthenticated_single_user"], "scopes": [
+                "read:status", "write:queue:edit", "write:queue:control",
+                "write:plan:control", "write:manager:control", "write:execute"]}
+        return {"roles": ["unauthenticated_public"], "scopes": self.scopes}
 
     def plans_allowed(self, *, reload: bool = False) -> JSON:
         self._record("plans_allowed")

@@ -12,7 +12,7 @@ from planrunner.controllers.plans import PlansHandlers, QueueOptions
 from planrunner.plan_params import FieldKind, FormValue, PlanSpec
 from planrunner.ui.fields import DEFAULT_FACTORIES, FieldFactory, FieldWidget, make_field
 from planrunner.ui.style import PARAM_FONT_SIZE
-from planrunner.ui.widgets import ScrollableFrame
+from planrunner.ui.widgets import ScrollableFrame, set_enabled
 
 
 class PlanForm:
@@ -135,6 +135,11 @@ class PlanForm:
                 label.configure(text=f"⚠ {errors[name]}", style="Error.TLabel")
             else:
                 label.configure(text=help_text, style="Help.TLabel")
+
+    def enable_submit(self, add: bool, run_now: bool) -> None:
+        set_enabled(self._add, add)
+        set_enabled(self._save_edit, add)
+        set_enabled(self._run_now, run_now)
 
     def set_edit_mode(self, editing: str | None) -> None:
         if editing is None:

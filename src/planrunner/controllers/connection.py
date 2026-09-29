@@ -6,15 +6,20 @@ from typing import Protocol
 
 from planrunner.client import ConnectionSettings
 from planrunner.controllers.commands import Commands
+from planrunner.credentials import FoundKey
 from planrunner.events import (
     Connected,
     Disconnected,
     Notice,
+    PermissionsKnown,
     ServerReachable,
     ServerUnreachable,
     StatusUpdated,
 )
+from planrunner.permissions import Permissions
 from planrunner.protocols import (
+    JSON,
+    CallRunner,
     ConfigStore,
     Dialogs,
     DoneCallback,
@@ -55,8 +60,18 @@ class ConnectionView(Protocol):
 
     def enable_environment_buttons(self, can_open: bool, can_close: bool) -> None: ...
 
+    def show_access(self, text: str) -> None:
+        """What the connection may do, e.g. 'full control' or 'read only'; '' to clear."""
+        ...
 
-class Connector(Protocol):
+
+class KeyLookup(Protocol):
+    def find(self, server_uri: str, typed: str = "") -> FoundKey | None: ...
+
+
+class Connector(CallRunner, Protocol):
+    """Opens and closes the connection, and runs calls on it."""
+
     def connect(
         self, settings: ConnectionSettings, on_done: DoneCallback[QueueServerAPI]
     ) -> None: ...
@@ -75,6 +90,7 @@ class ConnectionController:
         bus: EventBusLike,
         dialogs: Dialogs,
         config: ConfigStore,
+        keys: KeyLookup,
     ) -> None:
         self._view = view
         self._connector = connector
@@ -83,7 +99,10 @@ class ConnectionController:
         self._bus = bus
         self._dialogs = dialogs
         self._config = config
+        self._keys = keys
         self._uri: str | None = None
+        self._allowed = Permissions.full()
+        self._status: JSON | None = None
 
         view.set_handlers(self)
         view.fill_form(ConnectionForm(uri=str(config.load().get("server_uri", ""))))
@@ -101,15 +120,22 @@ class ConnectionController:
             self._dialogs.error("Connect", "Enter the server address, e.g. http://localhost:60610")
             return
         self._stop_feeds()
-        settings = ConnectionSettings(uri=form.uri.strip(), api_key=form.api_key.strip() or None)
+        uri = form.uri.strip()
+        key = self._keys.find(uri, typed=form.api_key)
+        settings = ConnectionSettings(uri=uri, api_key=key.key if key else None)
         self._view.show_connection("connecting")
-        self._connector.connect(settings, lambda outcome: self._on_connected(settings, outcome))
+        self._view.show_access("")
+        self._connector.connect(
+            settings, lambda outcome: self._on_connected(settings, key, outcome)
+        )
 
     def on_disconnect(self) -> None:
         self._stop_feeds()
         self._connector.disconnect()
         self._view.show_connection("disconnected")
         self._view.enable_environment_buttons(can_open=False, can_close=False)
+        self._view.show_access("")
+        self._status, self._allowed = None, Permissions.full()
         if self._uri is not None:
             self._bus.publish(Disconnected(self._uri))
             self._bus.publish(Notice(f"Disconnected from {self._uri}"))
@@ -128,7 +154,8 @@ class ConnectionController:
     # --- Events -----------------------------------------------------------------
 
     def _on_connected(
-        self, settings: ConnectionSettings, outcome: Outcome[QueueServerAPI]
+        self, settings: ConnectionSettings, key: FoundKey | None,
+        outcome: Outcome[QueueServerAPI],
     ) -> None:
         if not outcome.ok:
             self._view.show_connection("disconnected")
@@ -142,14 +169,41 @@ class ConnectionController:
         for feed in self._feeds:
             feed.start(api)
         self._bus.publish(Connected(settings.uri, api))
-        self._bus.publish(Notice(f"Connected to {settings.uri}"))
+        using = f" using the API key from {key.origin}" if key else " without an API key"
+        self._bus.publish(Notice(f"Connected to {settings.uri}{using}"))
+        self._check_permissions()
+
+    def _check_permissions(self) -> None:
+        def done(outcome: Outcome[JSON]) -> None:
+            if outcome.ok and outcome.value is not None:
+                self._set_permissions(Permissions.from_scopes(outcome.value.get("scopes", ())))
+            else:  # the server cannot say; let it judge each command
+                self._set_permissions(Permissions.full(), note="permissions unknown")
+
+        self._connector.run(lambda api: api.api_scopes(), done)
+
+    def _set_permissions(self, allowed: Permissions, note: str = "") -> None:
+        self._allowed = allowed
+        self._refresh_environment_buttons()
+        text = "read only" if allowed.read_only else note or "full control"
+        self._view.show_access(text)
+        self._bus.publish(PermissionsKnown(allowed))
+        if allowed.read_only:
+            self._bus.publish(Notice(
+                "Read only: this connection may watch but not change the queue or RunEngine. "
+                "Connect with the beamline API key for control."
+            ))
 
     def _on_reachable(self) -> None:
         if self._uri is not None:
             self._view.show_connection("connected")
 
     def _on_status(self, event: StatusUpdated) -> None:
-        controls = controls_for(event.status)
+        self._status = event.status
+        self._refresh_environment_buttons()
+
+    def _refresh_environment_buttons(self) -> None:
+        controls = controls_for(self._status, self._allowed)
         self._view.enable_environment_buttons(
             can_open=controls.open_environment, can_close=controls.close_environment
         )

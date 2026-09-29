@@ -12,6 +12,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 from planrunner.app import App, AppOptions  # noqa: E402
+from planrunner.credentials import KeyFinder  # noqa: E402
 
 PLANS = {
     "count": {
@@ -46,6 +47,7 @@ def app(tmp_path):
         AppOptions(server_uri="http://sim:60610", config_path=tmp_path / "config.json",
                    status_period=0.05),
         api_factory=lambda settings: server,
+        keys=KeyFinder([]),  # hermetic: ignore this machine's /etc/qs_client and env
     )
     application.window.root.withdraw()
     application.server = server  # type: ignore[attr-defined]
@@ -104,3 +106,27 @@ def test_closing_the_gui_sends_nothing_to_the_server(app):
     app.close()
     assert not writes & {name for name, _, _ in app.server.calls}
     app.close = lambda: None  # already closed
+
+
+def test_read_only_connection_greys_out_every_write_control(app):
+    window, server = app.window, app.server
+    server.scopes = ["read:status", "read:queue", "read:history", "read:console"]
+    app.connection.on_connect()
+    settle(app, lambda: "read only" in window.connection_bar._access.cget("text"))
+    settle(app, lambda: server.called("status"))
+    app.window.root.update()
+
+    buttons = window.scheduler._buttons
+    enabled = [key for key, button in buttons.items() if not button.instate(["disabled"])]
+    assert enabled == []
+    assert window.plan_form._add.instate(["disabled"])
+    assert window.plan_form._run_now.instate(["disabled"])
+    assert window.connection_bar._open_env.instate(["disabled"])
+    assert window.connection_bar._close_env.instate(["disabled"])
+
+
+def test_full_control_enables_queue_editing(app):
+    app.connection.on_connect()
+    settle(app, lambda: "full control" in app.window.connection_bar._access.cget("text"))
+    settle(app, lambda: app.window.scheduler._buttons["start"].instate(["!disabled"]))
+    assert app.window.scheduler._buttons["edit"].instate(["!disabled"])

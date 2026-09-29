@@ -20,6 +20,9 @@ mypy = "*"
 
 [tasks]
 planrunner = "planrunner"
+# The HEX beamline queueserver. Run as the beamline operator account so the API key
+# the bsqs role deploys (/etc/qs_client/<host>) is readable; otherwise it connects read only.
+hex = "planrunner --server https://xf27id1-hex-qs1.nsls2.bnl.gov:443 --connect"
 
 [feature.test.tasks]
 test = "pytest -q"

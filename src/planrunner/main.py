@@ -36,8 +36,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "-k", "--api-key",
-        default=os.environ.get("QSERVER_HTTP_SERVER_API_KEY"),
-        help="API key for the server (default: $QSERVER_HTTP_SERVER_API_KEY)",
+        help="API key for the server. Normally not needed: planrunner uses the key the bsqs "
+             "role deploys (/etc/qs_client/<server host>, then $QSERVER_HTTP_SERVER_API_KEY). "
+             "Without any key it connects read only.",
     )
     parser.add_argument("-c", "--connect", action="store_true",
                         help="connect as soon as the window opens")
