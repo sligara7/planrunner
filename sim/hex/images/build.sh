@@ -2,7 +2,7 @@
 # Build the simulated HEX beamline's local Docker images from pinned public sources.
 #
 #   sim/hex/images/build.sh             # build whichever images are missing
-#   sim/hex/images/build.sh --rebuild   # build all three again
+#   sim/hex/images/build.sh --rebuild [panda|kinetix|phantom ...]   # build again (default: all)
 #
 #   hexsim-panda-sim:local     PandABlocks-server + the FPGA block-sim engine (Dockerfile)
 #   hexsim-kinetix-ioc:local   real ADSimDetector IOC under the HEX Kinetix prefix
@@ -27,8 +27,15 @@ PHANTOM_TEMPLATE="/epics/modules/adphantom_afefafc/db/phantomCamera.template"
 say() { echo "[images] $*" >&2; }
 have() { docker image inspect "$1" >/dev/null 2>&1; }
 
-rebuild=false
-[ "${1:-}" = "--rebuild" ] && rebuild=true
+rebuild=()
+if [ "${1:-}" = "--rebuild" ]; then
+    shift
+    rebuild=("$@")
+    [ $# -eq 0 ] && rebuild=(panda kinetix phantom)
+fi
+wanted() {  # wanted NAME IMAGE: build when asked to rebuild it, or when it is missing
+    [[ " ${rebuild[*]} " == *" $1 "* ]] || ! have "$2"
+}
 
 fetch_ioc_deploy() {
     local dir="$work/nsls2.ioc_deploy"
@@ -58,20 +65,24 @@ deploy_ioc() {
 
 add_phantom_records() {
     # Give the IOC the PVs the HEX-deployed ADPhantom has beyond the public source.
-    docker exec -i "$DEPLOY_CONTAINER" sh -c "cat >> $PHANTOM_TEMPLATE" \
+    # As root: the role installs the template owned by the build user.
+    docker exec -i -u 0 "$DEPLOY_CONTAINER" sh -c "cat >> $PHANTOM_TEMPLATE" \
         < "$sim/iocs/phantom/acquire_time_ms.template"
 }
 
 trap 'docker rm -f "$DEPLOY_CONTAINER" >/dev/null 2>&1 || true' EXIT
 
-if $rebuild || ! have hexsim-panda-sim:local; then
+if wanted panda hexsim-panda-sim:local; then
     say "building hexsim-panda-sim:local..."
     docker compose -f "$sim/compose/docker-compose.panda.yml" build panda-sim
 fi
-if $rebuild || ! have hexsim-kinetix-ioc:local; then
+if wanted kinetix hexsim-kinetix-ioc:local; then
     deploy_ioc hexsim-kinetix-ioc:local "$sim/iocs/kinetix/hexsim-kinetix1.yml"
 fi
-if $rebuild || ! have hexsim-phantom-ioc:local; then
+if wanted phantom hexsim-phantom-ioc:local; then
     deploy_ioc hexsim-phantom-ioc:local "$sim/iocs/phantom/hexsim-phantom1.yml" add_phantom_records
+    count=$(docker run --rm --entrypoint grep hexsim-phantom-ioc:local -c AcquireTimeMs \
+        "$PHANTOM_TEMPLATE" || true)
+    [ "$count" = 3 ] || { say "ERROR: phantom template has $count AcquireTimeMs records, expected 3"; exit 1; }
 fi
 say "images ready."
