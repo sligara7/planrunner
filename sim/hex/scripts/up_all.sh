@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# ONE-SHOT bring-up of the ENTIRE simulated HEX beamline. Idempotent: running
+# pieces are detected and left alone, missing ones are started. Canonical
+# step-by-step (and what each piece is) lives in PROGRESS.md; this script IS
+# that pre-flight, automated.
+#
+#   ./scripts/up_all.sh
+#
+# Env knobs (defaults are this planrunner checkout; sim/up.sh sets them):
+#   HEX_PROFILE_MANIFEST  pixi.toml of hex-profile-collection (for sim_ioc's
+#                         ophyd-async env). Default: the pinned checkout sim/up.sh
+#                         fetches into .sim/hex-profile-collection
+#   HEX_SIM_TOOLENV       python env for the helper scripts. Default: planrunner's
+#                         pixi `simtools` environment (installed if missing).
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "$here/.." && pwd)"
+repo="$(cd "$root/../.." && pwd)"    # the planrunner checkout
+PROFILE_MANIFEST="${HEX_PROFILE_MANIFEST:-$repo/.sim/hex-profile-collection/pixi.toml}"
+TOOLENV="${HEX_SIM_TOOLENV:-$repo/.pixi/envs/simtools}"
+
+say() { echo "[up_all] $*"; }
+
+# ---- tool env (helper scripts need caproto/pyepics/pandablocks/h5py) --------
+if [ ! -x "$TOOLENV/bin/python" ]; then
+    say "installing the simtools environment (one-time)..."
+    pixi install --manifest-path "$repo/pixi.toml" -e simtools
+fi
+PY="$TOOLENV/bin/python"
+
+# ---- 0. data dir + services + experiment identity ---------------------------
+# If docker recreated the dir root-owned (daemon restart before up), chmod
+# by non-owner fails even when the mode is already right — writable is what
+# matters.
+mkdir -p /tmp/hex-sim-data
+chmod 777 /tmp/hex-sim-data 2>/dev/null || [ -w /tmp/hex-sim-data ] || {
+    echo "[up_all] ERROR: /tmp/hex-sim-data not writable (root-owned?); fix:"
+    echo "         docker exec -u 0 hexsim-phantom-ioc chmod -R 777 /tmp/hex-sim-data"
+    exit 1
+}
+say "services (Redis/Mongo/Kafka/Tiled) + sim sync-experiment..."
+"$here/up.sh" >/dev/null
+say "  services OK"
+
+# ---- 1. PandA pair (engine sim :8888/:9101 + pandablocks-ioc CA :5095) ------
+say "panda pair (may take ~30 s on first start)..."
+COMPOSE_IGNORE_ORPHANS=1 docker compose -f "$root/compose/docker-compose.panda.yml" up -d 2>/dev/null
+# Robust against transient docker-logs hiccups on a long-running container
+# (seen 2026-08-07: marker present but the log grep failed once and aborted a
+# healthy sim): an IOC container that has already been up >5 min counts as
+# initialized even if the marker grep fails.
+panda_up() {
+    docker logs hexsim-panda-ioc 2>/dev/null | grep -q "All initialization complete" && return 0
+    started=$(docker inspect --format '{{.State.StartedAt}}' hexsim-panda-ioc 2>/dev/null) || return 1
+    [ -n "$started" ] && [ $(( $(date +%s) - $(date -d "$started" +%s) )) -gt 300 ]
+}
+for i in $(seq 60); do
+    panda_up && break
+    [ "$i" = 60 ] && { say "ERROR: panda-ioc never finished init (docker logs hexsim-panda-ioc)"; exit 1; }
+    sleep 2
+done
+say "  panda pair OK"
+
+# ---- 2. Kinetix frame tier (real AD IOC, CA :5085) ---------------------------
+if ! docker image inspect hexsim-kinetix-ioc:local >/dev/null 2>&1; then
+    say "ERROR: image hexsim-kinetix-ioc:local missing — build it once with"
+    say "       sim/hex/images/build.sh (sim/up.sh does this for you)."
+    exit 1
+fi
+say "kinetix AD IOC..."
+COMPOSE_IGNORE_ORPHANS=1 docker compose -f "$root/compose/docker-compose.kinetix.yml" up -d 2>/dev/null
+for i in $(seq 60); do
+    docker logs hexsim-kinetix-ioc 2>&1 | grep -q "completed startup" && break
+    [ "$i" = 60 ] && { say "ERROR: kinetix IOC never finished startup (docker logs hexsim-kinetix-ioc)"; exit 1; }
+    sleep 2
+done
+say "  kinetix AD IOC OK"
+
+# ---- 2b. Phantom tier (sim camera + real ADPhantom IOC, CA :5105) ------------
+# START ORDER MATTERS: the driver opens its CTRL/DATA sockets at iocInit, so
+# sim_camera must be listening on 7115/7116 BEFORE the IOC container boots.
+if ! pgrep -f "iocs/phantom/sim_camera.py" >/dev/null; then
+    say "starting phantom sim camera (CTRL :7115 / DATA :7116)..."
+    nohup "$PY" -u "$root/iocs/phantom/sim_camera.py" \
+        > /tmp/hex-phantom-cam.log 2>&1 &
+    sleep 2
+fi
+if ! docker image inspect hexsim-phantom-ioc:local >/dev/null 2>&1; then
+    say "ERROR: image hexsim-phantom-ioc:local missing — build it once with"
+    say "       sim/hex/images/build.sh (sim/up.sh does this for you)."
+    exit 1
+fi
+say "phantom AD IOC..."
+COMPOSE_IGNORE_ORPHANS=1 docker compose -f "$root/compose/docker-compose.phantom.yml" up -d 2>/dev/null
+for i in $(seq 60); do
+    docker logs hexsim-phantom-ioc 2>&1 | grep -q "completed startup" && break
+    [ "$i" = 60 ] && { say "ERROR: phantom IOC never finished startup (docker logs hexsim-phantom-ioc)"; exit 1; }
+    sleep 2
+done
+say "  phantom AD IOC OK"
+
+# ---- 3. motor IOC (:5075) ----------------------------------------------------
+if ! ss -uln | grep -q "127.0.0.1:5075 "; then
+    say "starting motor IOC..."
+    EPICS_CAS_SERVER_PORT=5075 EPICS_CAS_INTF_ADDR_LIST=127.0.0.1 \
+        nohup "$PY" "$root/iocs/motor/motor_ioc.py" \
+        > /tmp/hex-motor.log 2>&1 &
+    sleep 4
+fi
+say "  motor IOC OK"
+
+# ---- 4. block design + IOC-level inits (safe to rerun) -----------------------
+"$PY" "$root/iocs/panda/hex_tomo_design.py" >/dev/null
+EPICS_CA_ADDR_LIST=127.0.0.1:5095 "$PY" "$root/iocs/panda/init_panda_ioc.py" >/dev/null
+EPICS_CA_ADDR_LIST=127.0.0.1:5085 "$PY" "$root/iocs/kinetix/init_kinetix.py" >/dev/null
+say "  design + inits OK"
+
+# ---- 5. motor->INENC bridge ---------------------------------------------------
+if ! pgrep -f "motor_encoder_bridge.py" >/dev/null; then
+    say "starting bridge..."
+    EPICS_CA_AUTO_ADDR_LIST=NO EPICS_CA_ADDR_LIST=127.0.0.1:5075 \
+        nohup "$PY" -u "$root/iocs/panda/motor_encoder_bridge.py" \
+        > /tmp/hex-bridge.log 2>&1 &
+    sleep 3
+fi
+say "  bridge OK"
+
+# ---- 6. sim_ioc (shutters/metadata blackhole + typed Det:3) -------------------
+if ! pgrep -f "sim_ioc.py" >/dev/null; then
+    if [ -f "$PROFILE_MANIFEST" ]; then
+        say "starting sim_ioc (pixi env: $PROFILE_MANIFEST)..."
+        BLACKHOLE_EXCLUDE_PREFIXES="XF:27ID1-BI{Kinetix-Det:1} XF:27ID1-ES{PANDA:1} XF:27IDF-OP:1{MC:5- XF:27ID1-ES{Phantom-Det:1}" \
+            nohup pixi run --manifest-path "$PROFILE_MANIFEST" -e terminal \
+            python "$root/iocs/sim_ioc.py" --kinetix-ids 3 \
+            > /tmp/hex-simioc.log 2>&1 &
+        for _ in $(seq 30); do grep -q "serving" /tmp/hex-simioc.log 2>/dev/null && break; sleep 3; done
+    else
+        say "WARN: $PROFILE_MANIFEST not found — sim_ioc (shutters/metadata) NOT started."
+    fi
+fi
+say "  sim_ioc OK"
+
+# ---- 7. seed shutter status open (blackhole PVs are writable) -----------------
+EPICS_CA_AUTO_ADDR_LIST=NO EPICS_CA_ADDR_LIST=127.0.0.1:5064 "$PY" - <<'EOF' >/dev/null 2>&1 || true
+from epics import caput
+for pv in ('XF:27IDA-PPS{Sh:FE}Sts:OpnCmd-Sts', 'XF:27IDA-PPS{L1-S1}Sts:OpnCmd-Sts'):
+    caput(pv, 1, wait=True, timeout=5)
+EOF
+say "  shutters seeded open"
+
+say "ALL UP. Client env: source scripts/env.sh"
+say "Smoke test:   $PY iocs/panda/tests/slowmove_capture_test.py"
+say "Boot profile: HEX_SIM=1 pixi run -e terminal ipython -- --profile-dir=.   (in hex-profile-collection)"
+say "Oracle:       see oracle/Dockerfile header (or PROGRESS.md step 9)"

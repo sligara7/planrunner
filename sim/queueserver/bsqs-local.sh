@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # A local replica of the NSLS-II "bsqs" queueserver deployment, for testing planrunner.
 #
-#   devtools/bsqs-local/bsqs-local.sh up [builtin|hex]   # start redis + RE Manager + httpserver
-#   devtools/bsqs-local/bsqs-local.sh down               # stop them
-#   devtools/bsqs-local/bsqs-local.sh status
+#   sim/queueserver/bsqs-local.sh up [builtin|hex]   # start redis + RE Manager + httpserver
+#   sim/queueserver/bsqs-local.sh down               # stop them
+#   sim/queueserver/bsqs-local.sh status
 #
 # Same shape as the beamline VM: redis on 60590, RE Manager and httpserver talking over
 # ZMQ ipc sockets, httpserver on localhost:60610 with the role's auth rules (anonymous =

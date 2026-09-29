@@ -12,10 +12,10 @@ Both services run from the profile's pixi `qs` environment, as the systemd units
 two `*.yml.in` files mirror the role's templates.
 
 ```bash
-devtools/bsqs-local/bsqs-local.sh up builtin   # queueserver's simulated profile, no IOCs
+sim/queueserver/bsqs-local.sh up builtin   # queueserver's simulated profile, no IOCs
 pixi run live-test                             # drive the real GUI against it
 pixi run planrunner --server http://localhost:60610 --api-key planrunnerdev --connect
-devtools/bsqs-local/bsqs-local.sh down
+sim/queueserver/bsqs-local.sh down
 ```
 
 `up hex` runs hex-profile-collection's `startup/` with `HEX_SIM=1` instead. The simulated

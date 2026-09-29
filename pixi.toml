@@ -24,14 +24,32 @@ planrunner = "planrunner"
 # the bsqs role deploys (/etc/qs_client/<host>) is readable; otherwise it connects read only.
 hex = "planrunner --server https://xf27id1-hex-qs1.nsls2.bnl.gov:443 --connect"
 
+# The simulated HEX beamline + queueserver on this machine (see sim/README.md).
+sim-up = "sim/sim.sh up"
+sim-down = "sim/sim.sh down"
+sim-status = "sim/sim.sh status"
+sim-planrunner = "planrunner --server http://localhost:60610 --api-key planrunnerdev --connect"
+
 [feature.test.tasks]
 test = "pytest -q"
-# Against the local bsqs replica: devtools/bsqs-local/bsqs-local.sh up builtin
+# Against the local bsqs replica: sim/queueserver/bsqs-local.sh up builtin
 live-test = { cmd = "pytest -q tests/test_live_bsqs.py", env = { PLANRUNNER_LIVE_URI = "http://localhost:60610", PLANRUNNER_LIVE_KEY = "planrunnerdev" } }
 
 [feature.lint.tasks]
 lint = "ruff check src tests"
 typecheck = "mypy src"
 
+# Python for the simulated beamline's helper scripts (motor IOC, encoder bridge,
+# PandA/Kinetix init, smoke tests). Replaces the sim's own pip venv.
+[feature.simtools.dependencies]
+python = ">=3.12,<3.13"
+caproto = ">=1.3,<2"
+pyepics = ">=3.5,<4"
+pandablocks = ">=0.10,<0.11"
+h5py = "*"
+numpy = "*"
+pyyaml = "*"
+
 [environments]
 default = { features = ["test", "lint"], solve-group = "default" }
+simtools = { features = ["simtools"], no-default-feature = true }

@@ -1,0 +1,26 @@
+# Records the HEX-deployed ADPhantom IOC has beyond the public source
+# (jwlodek/ADPhantom@329598e ADPhantomApp/Db/phantomCamera.template): an
+# AcquireTime in milliseconds. sim/hex/images/build.sh appends this to the
+# role-installed template so the sim serves the same PVs as the beamline IOC.
+
+record(ao, "$(P)$(R)AcquireTimeMs") {
+  field(DTYP, "Soft Channel")
+  field(DESC, "Acquisition time in milliseconds")
+  field(FLNK, "$(P)$(R)CalcAcquireTime PP NMS")
+}
+
+record(calcout, "$(P)$(R)CalcAcquireTime") {
+  field(DTYP, "Soft Channel")
+  field(INPA, "$(P)$(R)AcquireTimeMs")
+  field(CALC, "A / 1000")
+  field(OOPT, "On Change")
+  field(OUT, "$(P)$(R)AcquireTime PP NMS")
+}
+
+record(calcout, "$(P)$(R)AcquireTimeMs_RBV") {
+  field(DTYP, "Soft Channel")
+  field(INPA, "$(P)$(R)AcquireTime_RBV")
+  field(CALC, "A * 1000")
+  field(SCAN, "1 second")
+}
+

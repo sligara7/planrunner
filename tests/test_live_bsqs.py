@@ -1,4 +1,4 @@
-"""End to end against a real queueserver: the local bsqs replica (devtools/bsqs-local).
+"""End to end against a real queueserver: the local bsqs replica (sim/queueserver).
 
 Skipped unless PLANRUNNER_LIVE_URI is set; `pixi run live-test` sets it. Uses the
 queueserver's built-in simulated profile (det1, det2, motor, count, ...).
