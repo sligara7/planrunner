@@ -163,24 +163,29 @@ class ConnectionController:
             return
         api = outcome.value
         assert api is not None
+        # Learn what this connection may do BEFORE announcing it, so nothing tries to
+        # read what it is not allowed to (anonymous HEX callers may not list plans).
+        self._connector.run(
+            lambda api: api.api_scopes(),
+            lambda scopes: self._on_permissions_read(settings, key, api, scopes),
+        )
+
+    def _on_permissions_read(
+        self, settings: ConnectionSettings, key: FoundKey | None, api: QueueServerAPI,
+        scopes: Outcome[JSON],
+    ) -> None:
+        if scopes.ok and scopes.value is not None:
+            self._set_permissions(Permissions.from_scopes(scopes.value.get("scopes", ())))
+        else:  # the server cannot say; let it judge each command
+            self._set_permissions(Permissions.full(), note="permissions unknown")
         self._uri = settings.uri
         self._config.save({"server_uri": settings.uri})
         self._view.show_connection("connected")
-        for feed in self._feeds:
-            feed.start(api)
-        self._bus.publish(Connected(settings.uri, api))
         using = f" using the API key from {key.origin}" if key else " without an API key"
         self._bus.publish(Notice(f"Connected to {settings.uri}{using}"))
-        self._check_permissions()
-
-    def _check_permissions(self) -> None:
-        def done(outcome: Outcome[JSON]) -> None:
-            if outcome.ok and outcome.value is not None:
-                self._set_permissions(Permissions.from_scopes(outcome.value.get("scopes", ())))
-            else:  # the server cannot say; let it judge each command
-                self._set_permissions(Permissions.full(), note="permissions unknown")
-
-        self._connector.run(lambda api: api.api_scopes(), done)
+        self._bus.publish(Connected(settings.uri, api))
+        for feed in self._feeds:
+            feed.start(api)
 
     def _set_permissions(self, allowed: Permissions, note: str = "") -> None:
         self._allowed = allowed

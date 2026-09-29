@@ -110,7 +110,7 @@ def test_closing_the_gui_sends_nothing_to_the_server(app):
 
 def test_read_only_connection_greys_out_every_write_control(app):
     window, server = app.window, app.server
-    server.scopes = ["read:status", "read:queue", "read:history", "read:console"]
+    server.scopes = ["read:status", "read:console"]  # anonymous, as bsqs configures it
     app.connection.on_connect()
     settle(app, lambda: "read only" in window.connection_bar._access.cget("text"))
     settle(app, lambda: server.called("status"))
@@ -123,6 +123,8 @@ def test_read_only_connection_greys_out_every_write_control(app):
     assert window.plan_form._run_now.instate(["disabled"])
     assert window.connection_bar._open_env.instate(["disabled"])
     assert window.connection_bar._close_env.instate(["disabled"])
+    assert window.plan_list._names == []
+    assert not server.called("plans_allowed")  # not even attempted without read:resources
 
 
 def test_full_control_enables_queue_editing(app):

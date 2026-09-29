@@ -61,9 +61,11 @@ class FakeQueueServer:
     def api_scopes(self) -> JSON:
         self._record("api_scopes")
         if self.scopes is None:
+            # What the bsqs-configured httpserver grants the single-user API key.
             return {"roles": ["unauthenticated_single_user"], "scopes": [
-                "read:status", "write:queue:edit", "write:queue:control",
-                "write:plan:control", "write:manager:control", "write:execute"]}
+                "read:status", "read:queue", "read:history", "read:resources", "read:console",
+                "write:queue:edit", "write:queue:control", "write:plan:control",
+                "write:manager:control", "write:execute"]}
         return {"roles": ["unauthenticated_public"], "scopes": self.scopes}
 
     def plans_allowed(self, *, reload: bool = False) -> JSON:

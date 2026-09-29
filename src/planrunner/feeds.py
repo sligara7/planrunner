@@ -23,7 +23,7 @@ from planrunner.events import (
     ServerUnreachable,
     StatusUpdated,
 )
-from planrunner.protocols import EventPublisher, QueueServerAPI
+from planrunner.protocols import JSON, EventPublisher, QueueServerAPI
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +87,15 @@ class PollingStatusFeed:
         self._loop.stop()
 
     def poll_once(self, api: QueueServerAPI) -> None:
-        """One poll. Public so tests can drive the feed without a thread."""
+        """One poll. Public so tests can drive the feed without a thread.
+
+        Only a failed ``status()`` means the server is unreachable. The queue and
+        history are fetched separately: a caller without ``read:queue`` (anonymous
+        on the HEX server) still gets status, and a refused fetch is not retried
+        until that part of the server changes again.
+        """
         try:
             status = api.status(reload=True)
-            self._publish_changes(api, status)
         except Exception as ex:
             if self._seen.reachable is not False:
                 self._bus.publish(ServerUnreachable(error=str(ex)))
@@ -99,29 +104,38 @@ class PollingStatusFeed:
         if self._seen.reachable is not True:
             self._bus.publish(ServerReachable())
         self._seen.reachable = True
+        self._publish_changes(api, status)
 
-    def _publish_changes(self, api: QueueServerAPI, status: dict) -> None:
+    def _publish_changes(self, api: QueueServerAPI, status: JSON) -> None:
         self._bus.publish(StatusUpdated(status))
         seen = self._seen
 
         if (uid := status.get("plan_queue_uid")) != seen.queue:
-            reply = api.queue_get(reload=True)
-            self._bus.publish(
-                QueueUpdated(running_item=reply.get("running_item") or None,
-                             items=tuple(reply.get("items", ())))
-            )
             seen.queue = uid
+            if (reply := self._fetch("queue", lambda: api.queue_get(reload=True))) is not None:
+                self._bus.publish(QueueUpdated(
+                    running_item=reply.get("running_item") or None,
+                    items=tuple(reply.get("items", ())),
+                ))
 
         if (uid := status.get("plan_history_uid")) != seen.history:
-            reply = api.history_get(reload=True)
-            self._bus.publish(HistoryUpdated(items=tuple(reply.get("items", ()))))
             seen.history = uid
+            if (reply := self._fetch("history", lambda: api.history_get(reload=True))) is not None:
+                self._bus.publish(HistoryUpdated(items=tuple(reply.get("items", ()))))
 
         plans_uid, devices_uid = status.get("plans_allowed_uid"), status.get("devices_allowed_uid")
         if (plans_uid, devices_uid) != (seen.plans_allowed, seen.devices_allowed):
             # The first poll counts as a change: it is what triggers the first load.
             self._bus.publish(AllowedChanged())
             seen.plans_allowed, seen.devices_allowed = plans_uid, devices_uid
+
+    @staticmethod
+    def _fetch(what: str, call: Callable[[], JSON]) -> JSON | None:
+        try:
+            return call()
+        except Exception as ex:
+            logger.debug("Could not fetch %s: %s", what, ex)
+            return None
 
 
 class ConsoleFeed:

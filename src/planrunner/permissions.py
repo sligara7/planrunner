@@ -22,6 +22,12 @@ class Permissions:
     """Open/close the RE worker environment (``write:manager:control``)."""
     execute: bool = True
     """Run an item immediately without queueing it (``write:execute``)."""
+    read_queue: bool = True
+    """See the queue (``read:queue``)."""
+    read_history: bool = True
+    """See the run history (``read:history``)."""
+    read_resources: bool = True
+    """See the allowed plans and devices (``read:resources``)."""
 
     @classmethod
     def full(cls) -> Self:
@@ -30,7 +36,7 @@ class Permissions:
 
     @classmethod
     def none(cls) -> Self:
-        return cls(False, False, False, False, False)
+        return cls(*([False] * 8))
 
     @classmethod
     def from_scopes(cls, scopes: Iterable[str]) -> Self:
@@ -41,6 +47,9 @@ class Permissions:
             control_plan="write:plan:control" in granted,
             control_manager="write:manager:control" in granted,
             execute="write:execute" in granted,
+            read_queue="read:queue" in granted,
+            read_history="read:history" in granted,
+            read_resources="read:resources" in granted,
         )
 
     @property

@@ -26,6 +26,8 @@ hex = "planrunner --server https://xf27id1-hex-qs1.nsls2.bnl.gov:443 --connect"
 
 [feature.test.tasks]
 test = "pytest -q"
+# Against the local bsqs replica: devtools/bsqs-local/bsqs-local.sh up builtin
+live-test = { cmd = "pytest -q tests/test_live_bsqs.py", env = { PLANRUNNER_LIVE_URI = "http://localhost:60610", PLANRUNNER_LIVE_KEY = "planrunnerdev" } }
 
 [feature.lint.tasks]
 lint = "ruff check src tests"

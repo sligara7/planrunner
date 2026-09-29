@@ -1,0 +1,18 @@
+# Mirrors bsqs/templates/bluesky-httpserver-config.yml.j2 (NSLS-II Ansible role).
+qserver_zmq_configuration:
+  control_address: ipc://@RUN_DIR@/bsqs-ctrl.sock
+  info_address: ipc://@RUN_DIR@/bsqs-info.sock
+
+authentication:
+  allow_anonymous_access: True
+
+api_access:
+  policy: bluesky_httpserver.authorization:BasicAPIAccessControl
+  args:
+    roles:
+      unauthenticated_public:
+        scopes_add: read:console
+      unauthenticated_single_user:
+        scopes_remove:
+          - write:scripts
+          - user:apikeys

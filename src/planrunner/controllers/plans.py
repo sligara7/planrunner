@@ -108,6 +108,7 @@ class PlansController:
         self._publish = publisher.publish
         self._dialogs = dialogs
         self._state = _State()
+        self._can_read_plans = True
 
         plan_list.set_handlers(self)
         form.set_handlers(self)
@@ -116,8 +117,7 @@ class PlansController:
         bus.subscribe(AllowedChanged, lambda _: self._load_allowed())
         bus.subscribe(Disconnected, lambda _: self._reset())
         bus.subscribe(EditItemRequested, lambda event: self._start_edit(event.item))
-        bus.subscribe(PermissionsKnown, lambda event: form.enable_submit(
-            add=event.allowed.edit_queue, run_now=event.allowed.execute))
+        bus.subscribe(PermissionsKnown, self._on_permissions)
 
     # --- Handlers ---------------------------------------------------------------
 
@@ -169,7 +169,21 @@ class PlansController:
 
     # --- Internals --------------------------------------------------------------
 
+    def _on_permissions(self, event: PermissionsKnown) -> None:
+        allowed = event.allowed
+        self._can_read_plans = allowed.read_resources
+        self._form.enable_submit(add=allowed.edit_queue, run_now=allowed.execute)
+        if not allowed.read_resources:
+            self._state.plans = {}
+            self._show_list()
+            self._form.clear(
+                "This connection may not list plans (it has no API key). "
+                "Connect with the beamline API key to build and queue plans."
+            )
+
     def _load_allowed(self) -> None:
+        if not self._can_read_plans:
+            return
         def fetch(api) -> tuple[JSON, JSON]:
             return api.plans_allowed(reload=True), api.devices_allowed(reload=True)
 
@@ -249,6 +263,7 @@ class PlansController:
 
     def _reset(self) -> None:
         self._state = _State(remembered=self._state.remembered)
+        self._can_read_plans = True
         self._list.show_plans([], None)
         self._form.clear("Connect to a server to see its plans.")
         self._form.enable_submit(add=True, run_now=True)

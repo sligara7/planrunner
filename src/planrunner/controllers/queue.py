@@ -257,6 +257,10 @@ class QueueController:
     def _on_permissions(self, event: PermissionsKnown) -> None:
         self._allowed = event.allowed
         self._refresh_controls()
+        if not event.allowed.read_queue:
+            self._view.show_item_details(
+                "The queue is not visible to this connection (it has no API key)."
+            )
 
     def _refresh_controls(self) -> None:
         self._view.enable_controls(
