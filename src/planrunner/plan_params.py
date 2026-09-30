@@ -21,7 +21,7 @@ from enum import StrEnum
 from typing import Any, Self
 
 from planrunner.arg_rows import Column, parse_rows, pattern_for
-from planrunner.device_tree import DeviceNode, components, parse_devices
+from planrunner.device_tree import DeviceNode, components, is_area_detector, parse_devices
 from planrunner.field_kinds import FieldKind
 from planrunner.protocols import JSON
 from planrunner.type_guess import DeviceFilter, guess
@@ -108,7 +108,8 @@ class Catalog:
 
     devices: tuple[str, ...] = ()
     detectors: tuple[str, ...] = ()
-    """Readable and not movable: what a 'detector' parameter should offer."""
+    """What a 'detector' parameter should offer: the area detectors (cameras); when the
+    server has none, everything readable and not movable."""
     readable: tuple[str, ...] = ()
     movable: tuple[str, ...] = ()
     flyable: tuple[str, ...] = ()
@@ -121,15 +122,15 @@ class Catalog:
         def names(flag: str | None = None) -> tuple[str, ...]:
             return tuple(sorted(n for n, d in devices.items() if flag is None or d.get(flag)))
 
+        tree = parse_devices(devices)
         return cls(
             devices=names(),
-            detectors=tuple(sorted(n for n, d in devices.items()
-                                   if d.get("is_readable") and not d.get("is_movable"))),
+            detectors=_detectors(devices, tree),
             readable=names("is_readable"),
             movable=names("is_movable"),
             flyable=names("is_flyable"),
             plans=tuple(sorted(plans)),
-            tree=parse_devices(devices),
+            tree=tree,
         )
 
     def builtin_choices(self, marker: str) -> tuple[str, ...] | None:
@@ -249,6 +250,7 @@ def _guessed_param(name: str, default: Any, catalog: Catalog, common: dict[str, 
         DeviceFilter.DETECTOR: catalog.detectors,
         DeviceFilter.READABLE: catalog.readable,
         DeviceFilter.MOVABLE: catalog.movable,
+        DeviceFilter.FLYABLE: catalog.flyable,
         DeviceFilter.ANY: catalog.devices,
     }[g.devices]
     capability = g.devices.value
@@ -275,6 +277,13 @@ _MARKER_CAPABILITY = {
 def _capability(shape: TypeShape) -> str | None:
     found = {_MARKER_CAPABILITY[n] for n in shape.names if n in _MARKER_CAPABILITY}
     return found.pop() if len(found) == 1 else None
+
+
+def _detectors(devices: Mapping[str, JSON], tree: Mapping[str, DeviceNode]) -> tuple[str, ...]:
+    if cameras := tuple(sorted(n for n, node in tree.items() if is_area_detector(node))):
+        return cameras
+    return tuple(sorted(n for n, d in devices.items()
+                        if d.get("is_readable") and not d.get("is_movable")))
 
 
 def _component_choices(

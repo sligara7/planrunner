@@ -76,6 +76,21 @@ def find(tree: Mapping[str, DeviceNode], path: str) -> DeviceNode | None:
     return node
 
 
+# The areaDetector driver's own records, under the same attribute names in ophyd-async
+# (ADBaseIO and every driver built on it) and legacy ophyd (CamBase).
+_AREA_DETECTOR_DRIVER = frozenset({"acquire", "acquire_time", "image_mode", "array_counter"})
+
+
+def is_area_detector(node: DeviceNode) -> bool:
+    """Has an areaDetector driver among its components (a camera, not a PandA or a stage).
+
+    Decided from the component tree, not class or device names, so a new camera
+    class (e.g. hextools' Phantom, whose driver subclasses ``ADBaseIO``) is found too.
+    """
+    return any(_AREA_DETECTOR_DRIVER.issubset(c.name for c in child.children)
+               for child in node.children)
+
+
 def components(node: DeviceNode, settable_only: bool = False) -> list[str]:
     """Dotted paths under ``node`` (not the node itself), optionally only settable ones."""
     return [

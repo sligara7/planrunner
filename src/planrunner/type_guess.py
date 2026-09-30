@@ -19,9 +19,11 @@ from planrunner.field_kinds import FieldKind
 
 class DeviceFilter(StrEnum):
     DETECTOR = "detector"
-    """Readable but not movable: excludes motors and settable command signals."""
+    """An area detector (camera); see ``Catalog.detectors``."""
     READABLE = "readable"
     MOVABLE = "movable"
+    FLYABLE = "flyable"
+    """A PandA is flyable, and no camera: not what 'detector' offers."""
     ANY = "any"
 
 
@@ -33,11 +35,12 @@ class Guess:
     """Offer these devices (only for device-like names)."""
 
 
-_READABLE_WORDS = {"detector", "detectors", "det", "dets", "camera", "cameras", "cam", "panda"}
+_DETECTOR_WORDS = {"detector", "detectors", "det", "dets", "camera", "cameras", "cam"}
+_FLYABLE_WORDS = {"panda", "pandas", "flyer", "flyers"}
 _MOVABLE_WORDS = {"motor", "motors", "stage", "axis", "positioner", "shutter", "shutters"}
 _DEVICE_WORDS = {"device", "devices", "signal", "signals"}
 _PLURAL_DEVICE_WORDS = {"detectors", "dets", "cameras", "motors", "shutters", "devices",
-                        "signals"}
+                        "signals", "pandas", "flyers"}
 _COUNT_WORDS = {"num", "number", "n", "count", "counts", "repetitions", "iterations",
                 "images", "projections", "steps", "points", "scans", "id", "moves"}
 _REAL_WORDS = {"time", "exposure", "period", "delay", "seconds", "secs", "deg", "degrees",
@@ -74,8 +77,10 @@ def guess(name: str, default: Any, has_default: bool) -> Guess:
 
 
 def _device_filter(words: set[str]) -> DeviceFilter | None:
-    if words & _READABLE_WORDS:
+    if words & _DETECTOR_WORDS:
         return DeviceFilter.DETECTOR
+    if words & _FLYABLE_WORDS:
+        return DeviceFilter.FLYABLE
     if words & _MOVABLE_WORDS:
         return DeviceFilter.MOVABLE
     if words & _DEVICE_WORDS:

@@ -299,3 +299,41 @@ def test_bad_rows_are_reported_by_row_and_column():
     with pytest.raises(PlanInputError) as info:
         build_item(spec, {"detectors": ["det1"], "args": "['det1', 0, 1]"})
     assert "not an allowed movable device" in info.value.errors["args"]
+
+
+def _driver(*names):
+    return {"components": {n: {"classname": "SignalRW"} for n in names}}
+
+
+# Shaped like HEX's devices_allowed: two cameras, a PandA, a stage group.
+HEX_DEVICES = {
+    "kinetix1": {"is_readable": True, "is_flyable": True, "components": {
+        "driver": _driver("acquire", "acquire_time", "image_mode", "array_counter",
+                          "trigger_mode"),
+        "hdf": _driver("capture", "num_captured")}},
+    "phantom1": {"is_readable": True, "is_flyable": True, "components": {
+        "cam": _driver("acquire", "acquire_time", "image_mode", "array_counter")}},
+    "panda1": {"is_readable": True, "is_flyable": True, "components": {
+        "pcap": _driver("arm", "active"), "data": _driver("capture", "hdf_directory")}},
+    "sample_tower": {"is_readable": True, "components": {
+        "axis_x1": {"is_movable": True, "components": {}}}},
+    "theta": {"is_readable": True, "is_movable": True},
+}
+
+
+def test_detectors_are_the_area_detectors():
+    catalog = Catalog.from_allowed(HEX_DEVICES, plans=[])
+    assert catalog.detectors == ("kinetix1", "phantom1")
+
+
+def test_without_area_detectors_detectors_are_readable_and_not_movable():
+    assert CATALOG.detectors == ("det1", "det2")
+
+
+def test_untyped_panda_parameter_offers_flyable_devices():
+    catalog = Catalog.from_allowed(HEX_DEVICES, plans=[])
+    plan = {"name": "fly", "parameters": [kw("detectors"), kw("panda", default="None")]}
+    spec = describe_plan(plan, catalog)
+    assert spec.param("detectors").choices == ("kinetix1", "phantom1")
+    assert spec.param("panda").choices == ("kinetix1", "panda1", "phantom1")
+    assert spec.param("panda").type_label == "flyable?"
