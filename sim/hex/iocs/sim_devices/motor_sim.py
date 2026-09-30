@@ -174,21 +174,33 @@ def motor_group(
     acceleration=0.2,
     limits=(-360.0, 360.0),
     resolution=1e-6,
+    encoder_step=1 / 200,
+    max_velocity=30.0,
 ):
     """Return a caproto ``FakeMotor`` PVGroup serving a motor record at ``pv_name``.
 
     Merge ``.pvdb`` into a dedicated motor IOC and serve it (caproto resolves the
     record fields ``.VAL``/``.RBV``/… from the base channel). Braces in the
     NSLS-II PV name are doubled for caproto's ``str.format`` macro step.
+
+    ``encoder_step`` (.ERES, degrees per count) is +1/200: the encoder bridge writes
+    -200 counts/deg into INENC1 and the PandA design's CALC1 negates it (as the
+    beamline's does), and hextools reads the angle as CALC1.OUT * ERES. ``max_velocity``
+    (.VMAX) is the default speed. hextools' fly scan divides by both, and FakeMotor
+    leaves them 0.
     """
     escaped = pv_name.replace("{", "{{").replace("}", "}}")
-    return FakeMotor(
+    group = FakeMotor(
         prefix=escaped,
         velocity=velocity,
         acceleration=acceleration,
         user_limits=limits,
         resolution=resolution,
     )
+    fields = group.motor.field_inst
+    fields.encoder_step_size._data["value"] = encoder_step
+    fields.max_velocity._data["value"] = max_velocity
+    return group
 
 
 def record_exclude_prefix(pv_name):

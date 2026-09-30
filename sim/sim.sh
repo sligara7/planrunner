@@ -16,6 +16,10 @@
 #      HEX profile against the sim
 # Then run planrunner against it with:  pixi run sim-planrunner
 #
+# SIM_PROFILE=hextools boots hextools' own profile in step 5 instead, from the checkout at
+# HEXTOOLS_REPO (default ~/git_projects/hextools; its pixi `qs` environment must be
+# installed). Browse its plan source with:  pixi run planrunner ... --source $HEXTOOLS_REPO/src
+#
 # Everything binds to 127.0.0.1. Sim data goes to /tmp/hex-sim-data, capped at
 # HEX_SIM_DATA_CAP_GB (default 20): past it, a watchdog turns detector file writing off.
 set -euo pipefail
@@ -110,7 +114,7 @@ up() {
     start_watchdog
     start_armed_gate
     PROFILE_REPO="$PROFILE_DIR" SIM_ENV="$repo/sim/hex/scripts/env.sh" \
-        "$repo/sim/queueserver/bsqs-local.sh" up hex
+        "$repo/sim/queueserver/bsqs-local.sh" up "${SIM_PROFILE:-hex}"
     cat <<EOF
 
 [sim] The simulated HEX beamline and its queueserver are up.

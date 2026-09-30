@@ -21,6 +21,14 @@ sim/queueserver/bsqs-local.sh down
 `up hex` runs hex-profile-collection's `startup/` with `HEX_SIM=1` instead. The simulated
 HEX beamline must be up first (`hex-ob/hex-simulated-beamline/scripts/up_all.sh`).
 
+`up hextools` runs hextools' own profile (`hextools.profiles.collection`, loaded with
+`startup_module`) with `HEXTOOLS_SIM=YES`, from the `qs` environment of the checkout at
+`HEXTOOLS_REPO` (default `~/git_projects/hextools`). In that mode the profile uses the
+sim's Redis, tiled and data directory, connects devices for real, and refuses to start if
+EPICS could reach anything but loopback. Its permissions file is
+`hextools/user_group_permissions.yaml` (the HEX profile's, unchanged). From the top:
+`SIM_PROFILE=hextools pixi run sim-up`.
+
 Everything the services write goes to `.bsqs-local/` (gitignored), including the plan
 list the worker rewrites when the environment opens. Nothing in the profile repo is
 modified.

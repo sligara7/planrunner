@@ -2,9 +2,10 @@
 
 Serves each configured per-detector device with its **exact typed PV set**
 (introspected from the ophyd-async device) and **fabricates everything else**
-(motors, shutters, plugins) via the vendored blackhole. Running one caproto
-server avoids the CA search-port (UDP 5064) conflict that makes multiple
-caproto servers on one host deaf to each other.
+(motors, plugins) via the vendored blackhole; the shutters and ring current
+come from ``facility_sim``. Running one caproto server avoids the CA search-port
+(UDP 5064) conflict that makes multiple caproto servers on one host deaf to each
+other.
 
 The per-detector PV sets come from the same modules used standalone
 (`kinetix_sim.build_kinetix` + `_ophyd_async_sim.build_pvdb`), so the
@@ -28,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).with_name("sim_devices")))
 sys.path.insert(0, str(Path(__file__).with_name("blackhole")))
 
 from _ophyd_async_sim import build_pvdb  # noqa: E402
+from facility_sim import build_facility_pvdb  # noqa: E402
 from kinetix_sim import build_kinetix, build_kinetix_overlay_pvdb  # noqa: E402
 from motor_sim import DEFAULT_MOTOR_PVS, record_exclude_prefix  # noqa: E402
 
@@ -88,6 +90,8 @@ def main():
     args = ap.parse_args()
 
     typed = build_detector_pvdb(args.kinetix_ids)
+    facility, _groups = build_facility_pvdb()  # _groups: keep the state machines alive
+    typed.update(facility)
     for i in args.kinetix_overlay_ids:
         typed.update(build_kinetix_overlay_pvdb(f"XF:27ID1-BI{{Kinetix-Det:{i}}}"))
 
@@ -102,7 +106,7 @@ def main():
     ioc = BlackholeIOC()  # ioc.pvdb is a fabricating ReallyDefaultDict
     ioc.pvdb.update(typed)  # seed exact typed detector PVs (override fabrication)
     print(
-        f"[hex-sim-ioc] serving {len(typed)} typed detector PVs "
+        f"[hex-sim-ioc] serving {len(typed)} typed detector + facility PVs "
         f"(motors excluded -> dedicated motor IOC) "
         f"+ blackhole fallback on 127.0.0.1 (Ctrl-C to stop)"
     )

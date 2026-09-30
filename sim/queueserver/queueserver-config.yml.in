@@ -7,9 +7,9 @@ network:
   redis_addr: "localhost:@REDIS_PORT@"
 startup:
   keep_re: true
-  startup_dir: "@STARTUP_DIR@"
+  @STARTUP_SOURCE@
   existing_plans_and_devices_path: "@RUN_DIR@/existing_plans_and_devices.yaml"
-  user_group_permissions_path: "@STARTUP_DIR@"
+  user_group_permissions_path: "@PERMISSIONS@"
 worker:
   use_ipython_kernel: false
 operation:

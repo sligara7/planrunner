@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A local replica of the NSLS-II "bsqs" queueserver deployment, for testing planrunner.
 #
-#   sim/queueserver/bsqs-local.sh up [builtin|hex]   # start redis + RE Manager + httpserver
+#   sim/queueserver/bsqs-local.sh up [builtin|hex|hextools]   # redis + RE Manager + httpserver
 #   sim/queueserver/bsqs-local.sh down               # stop them
 #   sim/queueserver/bsqs-local.sh status
 #
@@ -14,8 +14,11 @@
 #   builtin  the queueserver's own simulated profile (ophyd.sim det1, motor, ...): no IOCs
 #   hex      hex-profile-collection's startup/ with HEX_SIM=1 against the simulated HEX
 #            beamline (hex-ob/hex-simulated-beamline must be up: scripts/up_all.sh)
+#   hextools hextools' own profile (hextools.profiles.collection) with HEXTOOLS_SIM=YES
+#            against the simulated HEX beamline, from HEXTOOLS_REPO's `qs` environment
 #
 # Knobs: PROFILE_REPO (default ~/git_projects/hex-ob/hex-profile-collection),
+#        HEXTOOLS_REPO (default ~/git_projects/hextools),
 #        SIM_ENV (default ~/git_projects/hex-ob/hex-simulated-beamline/scripts/env.sh),
 #        API_KEY (default planrunnerdev; alphanumeric, as the httpserver requires), REDIS_PORT (60590), HTTP_PORT (60610).
 set -euo pipefail
@@ -31,13 +34,14 @@ SIM_ENV="${SIM_ENV:-$HOME/git_projects/hex-ob/hex-simulated-beamline/scripts/env
 API_KEY="${API_KEY:-planrunnerdev}"
 REDIS_PORT="${REDIS_PORT:-60590}"
 HTTP_PORT="${HTTP_PORT:-60610}"
+HEXTOOLS_REPO="${HEXTOOLS_REPO:-$HOME/git_projects/hextools}"
 QS=(pixi run --frozen --manifest-path "$PROFILE_REPO/pixi.toml" --environment qs)
 
 say() { echo "[bsqs-local] $*"; }
 
-render() {  # render TEMPLATE OUTPUT STARTUP_DIR
+render() {  # render TEMPLATE OUTPUT STARTUP_SOURCE PERMISSIONS
     sed -e "s|@RUN_DIR@|$RUN_DIR|g" -e "s|@SOCK_DIR@|$SOCK_DIR|g" -e "s|@REDIS_PORT@|$REDIS_PORT|g" \
-        -e "s|@STARTUP_DIR@|$3|g" "$1" > "$2"
+        -e "s|@STARTUP_SOURCE@|$3|g" -e "s|@PERMISSIONS@|$4|g" "$1" > "$2"
 }
 
 start() {  # start NAME COMMAND... (background, logged, pid recorded)
@@ -50,7 +54,7 @@ start() {  # start NAME COMMAND... (background, logged, pid recorded)
 running() { [ -f "$RUN_DIR/$1.pid" ] && kill -0 "$(cat "$RUN_DIR/$1.pid")" 2>/dev/null; }
 
 up() {
-    local profile=${1:-builtin} startup_dir
+    local profile=${1:-builtin} startup_dir="" startup_source permissions
     mkdir -p "$RUN_DIR" "$SOCK_DIR"
     case $profile in
         builtin)
@@ -69,12 +73,28 @@ up() {
             export HEX_SIM=1 MPLBACKEND=Agg
             startup_dir="$PROFILE_REPO/startup"
             ;;
-        *) say "unknown profile '$profile' (builtin|hex)"; exit 1 ;;
+        hextools)
+            [ -f "$SIM_ENV" ] || { say "missing $SIM_ENV"; exit 1; }
+            [ -f "$HEXTOOLS_REPO/pixi.toml" ] || { say "no hextools checkout at $HEXTOOLS_REPO"; exit 1; }
+            # shellcheck disable=SC1090
+            source "$SIM_ENV"
+            export HEXTOOLS_SIM=YES MPLBACKEND=Agg
+            QS=(pixi run --frozen --manifest-path "$HEXTOOLS_REPO/pixi.toml" --environment qs)
+            startup_source="startup_module: \"hextools.profiles.collection\""
+            permissions="$here/hextools/user_group_permissions.yaml"
+            # No list shipped: the worker writes it when the environment first opens.
+            printf 'existing_plans: {}\nexisting_devices: {}\n' > "$RUN_DIR/existing_plans_and_devices.yaml"
+            ;;
+        *) say "unknown profile '$profile' (builtin|hex|hextools)"; exit 1 ;;
     esac
-    # The worker rewrites this file when the environment opens; keep that out of the repo.
-    cp "$startup_dir/existing_plans_and_devices.yaml" "$RUN_DIR/existing_plans_and_devices.yaml"
-    render "$here/queueserver-config.yml.in" "$RUN_DIR/queueserver-config.yml" "$startup_dir"
-    render "$here/httpserver-config.yml.in" "$RUN_DIR/httpserver-config.yml" "$startup_dir"
+    if [ -n "$startup_dir" ]; then
+        startup_source="startup_dir: \"$startup_dir\""
+        permissions="$startup_dir"
+        # The worker rewrites this file when the environment opens; keep that out of the repo.
+        cp "$startup_dir/existing_plans_and_devices.yaml" "$RUN_DIR/existing_plans_and_devices.yaml"
+    fi
+    render "$here/queueserver-config.yml.in" "$RUN_DIR/queueserver-config.yml" "$startup_source" "$permissions"
+    render "$here/httpserver-config.yml.in" "$RUN_DIR/httpserver-config.yml" "$startup_source" "$permissions"
     echo "$profile" > "$RUN_DIR/profile"
 
     running redis || start redis redis-server --port "$REDIS_PORT" --bind 127.0.0.1 \
