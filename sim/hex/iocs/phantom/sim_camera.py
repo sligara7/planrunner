@@ -266,7 +266,7 @@ class SimCamera:
         name = f"c{max(cine, 0)}" if f"c{max(cine, 0)}" in self.params else "c1"
         return name, start, count
 
-    def _pump(self, payload: bytes, count: int):
+    def _pump(self, payload: bytes, count: int, on_done=None):
         sock = self.data_socket
 
         # Pace at 1G wire speed: the real camera streams over gigabit, so a
@@ -282,6 +282,8 @@ class SimCamera:
                     time.sleep(frame_s)
                 print(f"pump: sent {count} x {len(payload)} bytes to "
                       f"{sock.getpeername()}", flush=True)
+                if on_done is not None:
+                    on_done()
             except OSError as exc:
                 print(f"pump: aborted ({exc})", flush=True)
 
@@ -315,8 +317,21 @@ class SimCamera:
         fmt = re.search(r"fmt\s*:\s*(\w+)", spec)
         bits = self._FMT_BITS.get(fmt.group(1) if fmt else "P10", 10)
         w, h = (int(v) for v in self.params[name]["res"].split("x"))
-        self._pump(b"\x00" * (w * h * bits // 8), count)
+        self._pump(b"\x00" * (w * h * bits // 8), count,
+                   on_done=lambda: self._mark_saved(name))
         return OK
+
+    def _mark_saved(self, name: str):
+        """After a download, the cine's content is saved: add REU (reusable).
+
+        The driver maps REU to state bit 9, which hextools' Phantom reads as
+        ``cine_content_saved`` and waits for before a scan completes. A new
+        ``rec`` into the cine clears it again.
+        """
+        with self.lock:
+            c = self.params[name]
+            if "REU" not in c["state"]:
+                c["state"] = c["state"].replace("}", "REU }")
 
 
 class CtrlHandler(socketserver.StreamRequestHandler):

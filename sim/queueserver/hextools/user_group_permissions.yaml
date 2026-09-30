@@ -1,6 +1,7 @@
 # Queueserver permissions for hextools' profile under the sim: the HEX profile's
-# (hex-profile-collection startup/user_group_permissions.yaml), unchanged. Names starting
-# with "_" are never offered, which is how the profile hides plain plan imports.
+# (hex-profile-collection startup/user_group_permissions.yaml), plus one allowed function,
+# send_event_trigger (an operator's camera trigger from planrunner). Names starting with
+# "_" are never offered, which is how the profile hides plain plan imports.
 user_groups:
   root:  # Defines the rules for preliminary filtering of plan/device/function names for all groups.
     allowed_plans:
@@ -26,4 +27,5 @@ user_groups:
       - null  # Nothing is forbidden
     allowed_functions:
       - "function_sleep"  # Explicitly listed name
+      - "send_event_trigger"  # hextools: a camera's event trigger, from a client
       - ":^func_for_test"

@@ -94,6 +94,21 @@ start_armed_gate() {
     fi
 }
 
+start_phantom_trigger() {
+    # An armed Phantom waits for an EVENT trigger; in a fly scan (FSYNC) that is the
+    # start of the PandA's pulse train, which the sim has no cable for. The bridge
+    # sends it, and leaves a FREE-RUN camera (an operator's trigger) alone.
+    # HEX_SIM_PHANTOM_TRIGGER=0 turns it off.
+    [ "${HEX_SIM_PHANTOM_TRIGGER:-1}" = 0 ] && return
+    if ! pgrep -f "$repo/sim/hex/iocs/phantom/phantom_trigger_bridge.py" >/dev/null; then
+        # shellcheck disable=SC1091
+        (source "$repo/sim/hex/scripts/env.sh" \
+            && nohup "$toolpy" -u "$repo/sim/hex/iocs/phantom/phantom_trigger_bridge.py" \
+                > /tmp/hex-phantom-trigger-bridge.log 2>&1 &)
+        say "Phantom trigger bridge started (log /tmp/hex-phantom-trigger-bridge.log)"
+    fi
+}
+
 start_watchdog() {
     if ! pgrep -f "$watchdog_script" >/dev/null; then
         # shellcheck disable=SC1091
@@ -113,6 +128,7 @@ up() {
     HEX_PROFILE_MANIFEST="$PROFILE_DIR/pixi.toml" "$repo/sim/hex/scripts/up_all.sh"
     start_watchdog
     start_armed_gate
+    start_phantom_trigger
     say "queueserver profile: ${SIM_PROFILE:-hex}${HEXTOOLS_REPO:+ (HEXTOOLS_REPO=$HEXTOOLS_REPO)}"
     PROFILE_REPO="$PROFILE_DIR" SIM_ENV="$repo/sim/hex/scripts/env.sh" \
         "$repo/sim/queueserver/bsqs-local.sh" up "${SIM_PROFILE:-hex}"
@@ -136,6 +152,7 @@ host_processes=(
     "$repo/sim/hex/iocs/sim_ioc.py"
     "$repo/sim/hex/scripts/data_watchdog.py"
     "$repo/sim/hex/iocs/panda/armed_gate_bridge.py"
+    "$repo/sim/hex/iocs/phantom/phantom_trigger_bridge.py"
 )
 
 down() {
