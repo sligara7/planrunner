@@ -23,6 +23,7 @@ from planrunner.hidden_deps import HiddenDependency, How, hidden_dependencies
 from planrunner.plan_groups import source_of
 from planrunner.plan_params import Catalog, FieldKind, ParamKind, describe_plan
 from planrunner.protocols import JSON
+from planrunner.source_types import annotations_in
 from planrunner.sources import SourceFinder
 
 
@@ -57,7 +58,8 @@ def build_map(plans: Mapping[str, JSON], catalog: Catalog,
     maps = []
     for name in sorted(plans):
         plan = plans[name]
-        spec = describe_plan(plan, catalog)
+        found = finder.find(name, plan.get("module")) if finder is not None else None
+        spec = describe_plan(plan, catalog, annotations_in(found.text) if found else None)
         rows = []
         for p in spec.params:
             is_device = p.device_capability is not None or (
@@ -72,7 +74,7 @@ def build_map(plans: Mapping[str, JSON], catalog: Catalog,
             ))
         hidden: tuple[HiddenDependency, ...] = ()
         where = ""
-        if finder is not None and (found := finder.find(name, plan.get("module"))):
+        if found is not None:
             # A look-up "when not passed" is not hidden when the parameter declares a
             # device default: the queueserver shows that default and passes it itself.
             defaulted = {p.name for p in spec.params

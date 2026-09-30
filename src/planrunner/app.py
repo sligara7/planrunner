@@ -29,6 +29,7 @@ from planrunner.dispatch import QueueDispatcher
 from planrunner.events import EventBus
 from planrunner.feeds import ConsoleFeed, PollingStatusFeed
 from planrunner.protocols import Feed
+from planrunner.source_types import LocalSourceAnnotations
 from planrunner.sources import SourceFinder
 from planrunner.ui.main_window import MainWindow
 from planrunner.ui.services import QtDialogs, QtPump
@@ -64,7 +65,9 @@ class App:
         self.client = ServerClient(dispatcher, api_factory)
         self.feeds: list[Feed] = [PollingStatusFeed(bus, options.status_period), ConsoleFeed(bus)]
         commands = Commands(self.client, bus)
-        catalog = CatalogStore(commands=commands, bus=bus)
+        finder = SourceFinder(options.source_roots)
+        catalog = CatalogStore(commands=commands, bus=bus,
+                               source_types=LocalSourceAnnotations(finder))
         run_control = RunControl(commands=commands, bus=bus)
 
         self.window = window = MainWindow()
@@ -91,7 +94,7 @@ class App:
             run_control=run_control, bus=bus, dialogs=dialogs,
         )
         self.source = SourceController(
-            view=window.source_viewer, finder=SourceFinder(options.source_roots),
+            view=window.source_viewer, finder=finder,
             catalog=catalog, bus=bus, dialogs=dialogs,
         )
 

@@ -67,7 +67,8 @@ class ParamSpec:
     choice_values: tuple[Any, ...] = ()
     """For ``Literal`` choices: the typed value behind each entry of ``choices``."""
     device_capability: str | None = None
-    """For a device picker: 'movable', 'readable', 'detector', 'flyable' or 'any'."""
+    """For a device picker: 'movable', 'readable', 'detector', 'flyable', 'any', or
+    'class' (the classes a source annotation names)."""
     component_choices: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     """For a single-device picker: each device's components that may be chosen instead."""
     row_columns: tuple[Column, ...] = ()
@@ -165,17 +166,22 @@ class PlanInputError(ValueError):
 # ------------------------------------------------------------------------------
 
 
-def describe_plan(plan: JSON, catalog: Catalog) -> PlanSpec:
+def describe_plan(plan: JSON, catalog: Catalog,
+                  source_types: Mapping[str, str] | None = None) -> PlanSpec:
+    """``source_types``: annotations from the plan's local source (see ``source_types``),
+    used for parameters the queueserver describes without a type."""
     return PlanSpec(
         name=plan["name"],
         description=plan.get("description", ""),
         params=tuple(
-            _describe_param(p, catalog, plan["name"]) for p in plan.get("parameters", ())
+            _describe_param(p, catalog, plan["name"], (source_types or {}).get(p["name"]))
+            for p in plan.get("parameters", ())
         ),
     )
 
 
-def _describe_param(param: JSON, catalog: Catalog, plan_name: str = "") -> ParamSpec:
+def _describe_param(param: JSON, catalog: Catalog, plan_name: str = "",
+                    source_type: str | None = None) -> ParamSpec:
     kind = ParamKind(param.get("kind", {}).get("name", ParamKind.POSITIONAL_OR_KEYWORD))
     annotation = param.get("annotation") or {}
     shape = parse_type(annotation.get("type"))
@@ -236,9 +242,31 @@ def _describe_param(param: JSON, catalog: Catalog, plan_name: str = "") -> Param
         return ParamSpec(field_kind=simple, type_label=_with_units(_label(shape), shape), **common)
 
     if shape is UNKNOWN:
+        if source_type and (typed := _source_typed_param(source_type, catalog, common)):
+            return typed
         return _guessed_param(param["name"], default, catalog, common)
 
     return ParamSpec(field_kind=FieldKind.EXPRESSION, type_label=_label(shape), **common)
+
+
+def _source_typed_param(source_type: str, catalog: Catalog,
+                        common: dict[str, Any]) -> ParamSpec | None:
+    """Devices whose class the source annotation names, e.g. ``list[KinetixDetector]``.
+
+    None when the annotation names no class an allowed device has (then it is guessed).
+    """
+    shape = parse_type(source_type)
+    devices = tuple(name for name, node in catalog.tree.items()
+                    if node.classname in shape.names)
+    if not devices:
+        return None
+    return ParamSpec(
+        field_kind=FieldKind.MULTI_CHOICE if shape.is_list else FieldKind.CHOICE,
+        type_label=f"{source_type} (from source)",
+        choices=devices,
+        device_capability="class",
+        **{**common, "allows_none": common["allows_none"] or shape.allows_none},
+    )
 
 
 def _guessed_param(name: str, default: Any, catalog: Catalog, common: dict[str, Any]) -> ParamSpec:

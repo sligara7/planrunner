@@ -12,6 +12,7 @@ from planrunner.events import (
 )
 from planrunner.plan_params import Catalog, PlanSpec, describe_plan
 from planrunner.protocols import JSON, EventBusLike
+from planrunner.source_types import SourceAnnotations
 
 
 class CatalogStore:
@@ -21,9 +22,11 @@ class CatalogStore:
     current catalog synchronously through ``plans``, ``catalog`` and ``spec``.
     """
 
-    def __init__(self, *, commands: Commands, bus: EventBusLike) -> None:
+    def __init__(self, *, commands: Commands, bus: EventBusLike,
+                 source_types: SourceAnnotations | None = None) -> None:
         self._commands = commands
         self._bus = bus
+        self._source_types = source_types
         self.plans: dict[str, JSON] = {}
         self.catalog = Catalog()
         self._may_read = True
@@ -35,7 +38,10 @@ class CatalogStore:
 
     def spec(self, name: str) -> PlanSpec | None:
         plan = self.plans.get(name)
-        return describe_plan(plan, self.catalog) if plan is not None else None
+        if plan is None:
+            return None
+        from_source = self._source_types.for_plan(plan) if self._source_types else None
+        return describe_plan(plan, self.catalog, from_source)
 
     def reload(self) -> None:
         if not self._may_read:
