@@ -70,6 +70,7 @@ def run(args):
         "held": False,        # we stopped an armed camera; restart on train
         "tally_at_hold": None,
         "restarting": False,  # our own Acquire=1 put; don't re-hold it
+        "released": False,    # train fired; stay open until re-armed or internal
     }
 
     def external() -> bool:
@@ -86,18 +87,22 @@ def run(args):
     def on_acquire(value=None, **_kw):
         # Callback-driven hold: beat the first exposure (~ms latency).
         if value == 1 and external() and not state["restarting"]:
+            # A new arm is a new scan, even with no internal-mode step between
+            # scans: close the chain here, not a loop tick later.
+            gate.put(0, wait=False)
             acquire.put(0, wait=False)
             state["held"] = True
+            state["released"] = False
             state["tally_at_hold"] = state["tally"]
             print("HOLD: armed-external — camera stopped "
                   f"(tally={state['tally_at_hold']})", flush=True)
 
+    gate = PV(args.gate_pv, auto_monitor=True)
     counter = PV(args.counter_pv, callback=on_tally, auto_monitor=True)
     mode = PV(args.cam_prefix + "TriggerMode_RBV", callback=on_mode,
               auto_monitor=True)
     acquire = PV(args.cam_prefix + "Acquire", callback=on_acquire,
                  auto_monitor=True)
-    gate = PV(args.gate_pv)
     for pv in (counter, mode, acquire, gate):
         if not pv.wait_for_connection(timeout=args.connect_timeout):
             print("ERROR: could not connect to %s" % pv.pvname, file=sys.stderr)
@@ -106,8 +111,6 @@ def run(args):
     on_tally(value=counter.get())
     on_mode(char_value=mode.get(as_string=True))
 
-    gated = False
-    released = False   # train fired; stay open until the mode goes internal
     print(f"armed_gate_bridge up: watching {args.cam_prefix} + {args.counter_pv}, "
           f"gating {args.gate_pv}", flush=True)
 
@@ -121,22 +124,23 @@ def run(args):
     try:
         while True:
             time.sleep(1.0 / max(args.rate_hz, 1e-3))
+            # Read, not remembered: anything else may re-enable the plugin (a
+            # detector reset, init_kinetix), and a remembered "closed" leaks frames.
+            gated = gate.value == 0
 
             if not external():
                 # Back to internal: normal live-view routing, fresh cycle.
-                released = False
+                state["released"] = False
                 state["held"] = False
                 if gated:
                     gate.put(1, wait=True, timeout=args.put_timeout)
-                    gated = False
                     print("gate OPEN (internal trigger mode)", flush=True)
                 continue
 
             # External mode: closed while waiting for the train, open once
             # released (the running acquisition's frames must flow).
-            if not released and not gated:
+            if not state["released"] and not gated:
                 gate.put(0, wait=True, timeout=args.put_timeout)
-                gated = True
                 print("gate CLOSED (external trigger mode, awaiting train)",
                       flush=True)
 
@@ -151,10 +155,9 @@ def run(args):
                 if tally is not None and t0 is not None and tally > t0:
                     # The train is firing: open the chain and run the full
                     # armed acquisition.
-                    released = True
+                    state["released"] = True
                     if gated:
                         gate.put(1, wait=True, timeout=args.put_timeout)
-                        gated = False
                     state["restarting"] = True
                     acquire.put(1, wait=False)
                     state["held"] = False

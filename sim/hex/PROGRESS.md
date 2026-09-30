@@ -391,6 +391,16 @@ would too). Known residue for the BEAMLINE BATCH: consecutive fly scans in
 one session showed a one-frame plugin-state interplay (sim tests isolate
 per phase); watch run_multiple_scans on real hardware for the same.
 
+**planrunner follow-up (2026-09-30).** Driving `tomo_flyscan` from planrunner
+exposed three gaps, all fixed: (1) the IOC's stock routing fed HDF1 straight
+from the camera, bypassing the Trans1 gate — `init_kinetix.py` now sets HEX's
+Det:1 routing (cam → Trans1 → HDF1); (2) the bridge remembered its gate state
+instead of reading it, so anything re-enabling Trans1 leaked frames; (3) after
+a release the gate stayed open until an internal-mode step, which back-to-back
+scans never make — this was the one-frame "consecutive scans" residue above.
+Every re-arm now closes the gate in the Acquire callback. Three consecutive
+`tomo_flyscan` runs complete, 10 of 10 frames each.
+
 ## 🚧 Remaining / next
 
 1. **The "after" leg**: hextools `tomo_fly` via the tutorial (M0→M6), then

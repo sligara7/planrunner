@@ -32,6 +32,12 @@ SETTINGS = [
     # first capture ("must collect an array to get dimensions first") until some
     # frame has passed through the plugin, so the first scan after boot failed.
     ("HDF1:LazyOpen", 1),
+    # HEX's routing for Det:1: camera -> Trans1 -> HDF1 (hex-ob reset_detector's
+    # default_source_port). The IOC's stock commonPlugins wires HDF1 straight to the
+    # camera, which bypasses armed_gate_bridge's Trans1 gate: frames that finish in
+    # its stop race reach the file, and a fly scan fails its kickoff check.
+    ("Trans1:EnableCallbacks", 1),
+    ("HDF1:NDArrayPort", "TRANS1"),
     # Kinetix personality (chg:kinetix-personality): the typed KinetixDetector
     # demands TriggerMode choices {Internal, Rising Edge, Exp. Gate} (ophyd-async
     # compares as a SET). ADSimDetector's mbbo ships Internal/External — relabel
