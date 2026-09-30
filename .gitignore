@@ -9,3 +9,4 @@ __pycache__/
 sim/hex/compose/certs/*.crt
 sim/hex/compose/certs/*.key
 sim/hex/.toolenv/
+hex-plan-device-map.md

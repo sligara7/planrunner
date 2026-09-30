@@ -13,6 +13,7 @@ dependencies = ["bluesky-queueserver-api>=0.0.13", "PySide6>=6.8"]
 
 [project.scripts]
 planrunner = "planrunner.main:main"
+planrunner-map = "planrunner.device_map:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
