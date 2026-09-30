@@ -28,3 +28,16 @@ def test_parse_type(text, names, is_list, allows_none):
 @pytest.mark.parametrize("text", [None, "", "list[", "<class 'x'>"])
 def test_unreadable_types_are_unknown(text):
     assert not parse_type(text).known
+
+
+def test_literal_values_are_read():
+    shape = parse_type("typing.Literal['ellipse', 'linear', None]")
+    assert shape.literals == ("ellipse", "linear")
+    assert shape.allows_none
+    assert shape.names == frozenset()
+
+
+def test_annotated_is_unwrapped_and_keeps_its_metadata():
+    shape = parse_type("typing.Annotated[float, 's']")
+    assert shape.names == {"float"}
+    assert shape.metadata == ("s",)

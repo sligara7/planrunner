@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -92,6 +93,57 @@ class ChoiceField:
             self._combo.setEditText(text)
 
 
+class DevicePathField:
+    """A device, and optionally one of its components: ``tomo_rot_axis`` or
+    ``tomo_rot_axis.user_setpoint``. The component list follows the chosen device."""
+
+    WHOLE_DEVICE = "(whole device)"
+
+    def __init__(self, spec: ParamSpec) -> None:
+        self._components = spec.component_choices
+        self.widget_ = QWidget()
+        layout = QHBoxLayout(self.widget_)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._device = ChoiceField(spec)
+        self._component = QComboBox()
+        self._component.setMinimumWidth(200)
+        layout.addWidget(self._device.widget)
+        layout.addWidget(self._component)
+        self._device_combo().currentTextChanged.connect(self._fill_components)
+        self._fill_components(self._device_combo().currentText())
+
+    @property
+    def widget(self) -> QWidget:
+        return self.widget_
+
+    def get(self) -> FormValue:
+        device = str(self._device.get())
+        component = self._component.currentText()
+        if not device or component in ("", self.WHOLE_DEVICE):
+            return device
+        return f"{device}.{component}"
+
+    def set(self, value: FormValue) -> None:
+        device, _, component = str(value).partition(".")
+        self._device.set(device)
+        self._fill_components(device)
+        index = self._component.findText(component) if component else 0
+        self._component.setCurrentIndex(max(index, 0))
+
+    def _device_combo(self) -> QComboBox:
+        return self._device.widget  # type: ignore[return-value]
+
+    def _fill_components(self, device: str) -> None:
+        prefix = f"{device}."
+        paths = self._components.get(device, ())
+        self._component.blockSignals(True)
+        self._component.clear()
+        self._component.addItem(self.WHOLE_DEVICE)
+        self._component.addItems([p.removeprefix(prefix) for p in paths])
+        self._component.setEnabled(bool(paths))
+        self._component.blockSignals(False)
+
+
 class MultiChoiceField:
     """A short list of names, each with a checkbox."""
 
@@ -129,6 +181,10 @@ def _expression_field(spec: ParamSpec) -> FieldWidget:
     return ChoiceField(spec) if spec.choices else TextField(spec, width=240)
 
 
+def _choice_field(spec: ParamSpec) -> FieldWidget:
+    return DevicePathField(spec) if spec.component_choices else ChoiceField(spec)
+
+
 type FieldFactory = Callable[[ParamSpec], FieldWidget]
 
 DEFAULT_FACTORIES: Mapping[FieldKind, FieldFactory] = {
@@ -136,7 +192,7 @@ DEFAULT_FACTORIES: Mapping[FieldKind, FieldFactory] = {
     FieldKind.FLOAT: TextField,
     FieldKind.STRING: TextField,
     FieldKind.BOOLEAN: CheckField,
-    FieldKind.CHOICE: ChoiceField,
+    FieldKind.CHOICE: _choice_field,
     FieldKind.MULTI_CHOICE: MultiChoiceField,
     FieldKind.EXPRESSION: _expression_field,
 }

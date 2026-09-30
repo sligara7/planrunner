@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Self
 
+from planrunner.device_tree import DeviceNode, components, parse_devices
 from planrunner.field_kinds import FieldKind
 from planrunner.protocols import JSON
 from planrunner.type_guess import DeviceFilter, guess
@@ -62,6 +63,12 @@ class ParamSpec:
     """True when the user may also type a value that is not in ``choices``."""
     minimum: float | None = None
     maximum: float | None = None
+    choice_values: tuple[Any, ...] = ()
+    """For ``Literal`` choices: the typed value behind each entry of ``choices``."""
+    device_capability: str | None = None
+    """For a device picker: 'movable', 'readable', 'detector', 'flyable' or 'any'."""
+    component_choices: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    """For a single-device picker: each device's components that may be chosen instead."""
 
     @property
     def has_default(self) -> bool:
@@ -103,6 +110,8 @@ class Catalog:
     movable: tuple[str, ...] = ()
     flyable: tuple[str, ...] = ()
     plans: tuple[str, ...] = ()
+    tree: Mapping[str, DeviceNode] = field(default_factory=dict)
+    """Each top-level device with its component tree."""
 
     @classmethod
     def from_allowed(cls, devices: Mapping[str, JSON], plans: Iterable[str]) -> Self:
@@ -117,6 +126,7 @@ class Catalog:
             movable=names("is_movable"),
             flyable=names("is_flyable"),
             plans=tuple(sorted(plans)),
+            tree=parse_devices(devices),
         )
 
     def builtin_choices(self, marker: str) -> tuple[str, ...] | None:
@@ -179,21 +189,33 @@ def _describe_param(param: JSON, catalog: Catalog) -> ParamSpec:
         label = "*args" if kind is ParamKind.VAR_POSITIONAL else "**kwargs"
         return ParamSpec(field_kind=FieldKind.EXPRESSION, type_label=label, **common)
 
+    if shape.literals and not shape.names:
+        return ParamSpec(
+            field_kind=FieldKind.MULTI_CHOICE if shape.is_list else FieldKind.CHOICE,
+            type_label=_with_units("one of", shape),
+            choices=tuple(v if isinstance(v, str) else repr(v) for v in shape.literals),
+            choice_values=shape.literals,
+            **common,
+        )
+
     if choices := _choices_for(shape, annotation, catalog):
         names, suggestions_only = choices
         kind_of_field = FieldKind.MULTI_CHOICE if shape.is_list else FieldKind.CHOICE
         if suggestions_only:
             kind_of_field = FieldKind.EXPRESSION
+        capability = _capability(shape)
         return ParamSpec(
             field_kind=kind_of_field,
             type_label=_label(shape),
             choices=names,
             choices_are_suggestions=suggestions_only,
+            device_capability=capability,
+            component_choices=_component_choices(kind_of_field, capability, names, catalog),
             **common,
         )
 
     if not shape.is_list and (simple := _simple_field(shape)) is not None:
-        return ParamSpec(field_kind=simple, type_label=_label(shape), **common)
+        return ParamSpec(field_kind=simple, type_label=_with_units(_label(shape), shape), **common)
 
     if shape is UNKNOWN:
         return _guessed_param(param["name"], default, catalog, common)
@@ -212,14 +234,49 @@ def _guessed_param(name: str, default: Any, catalog: Catalog, common: dict[str, 
         DeviceFilter.MOVABLE: catalog.movable,
         DeviceFilter.ANY: catalog.devices,
     }[g.devices]
+    capability = g.devices.value
     return ParamSpec(
         field_kind=g.field_kind,
         type_label=g.label,
         choices=choices,
         # A guess may be wrong: a single device may also be typed in.
         choices_are_suggestions=g.field_kind is FieldKind.CHOICE,
+        device_capability=capability,
+        component_choices=_component_choices(g.field_kind, capability, choices, catalog),
         **common,
     )
+
+
+_MARKER_CAPABILITY = {
+    "__MOVABLE__": "movable",
+    "__DEVICE__": "any",
+    "__READABLE__": "readable",
+    "__FLYABLE__": "flyable",
+}
+
+
+def _capability(shape: TypeShape) -> str | None:
+    found = {_MARKER_CAPABILITY[n] for n in shape.names if n in _MARKER_CAPABILITY}
+    return found.pop() if len(found) == 1 else None
+
+
+def _component_choices(
+    kind: FieldKind, capability: str | None, devices: tuple[str, ...], catalog: Catalog
+) -> dict[str, tuple[str, ...]]:
+    """Components a single-device picker may offer: settable ones for movable, all for any."""
+    if kind is not FieldKind.CHOICE or capability not in ("movable", "any"):
+        return {}
+    offered = {}
+    for name in devices:
+        node = catalog.tree.get(name)
+        if node is not None and (paths := components(node, settable_only=capability == "movable")):
+            offered[name] = tuple(paths)
+    return offered
+
+
+def _with_units(label: str, shape: TypeShape) -> str:
+    units = ", ".join(str(m) for m in shape.metadata if isinstance(m, str))
+    return f"{label}, {units}" if units else label
 
 
 def _simple_field(shape: TypeShape) -> FieldKind | None:
@@ -375,6 +432,8 @@ def _convert(spec: ParamSpec, raw: FormValue) -> Any:
             return names
         case FieldKind.CHOICE:
             _check_choices(spec, [str(raw)])
+            if spec.choice_values:
+                return spec.choice_values[spec.choices.index(str(raw))]
             return str(raw)
         case FieldKind.INTEGER:
             return _parse_number(int, str(raw), "a whole number")
@@ -407,7 +466,11 @@ def _parse_expression(text: str) -> Any:
 def _check_choices(spec: ParamSpec, names: list[str]) -> None:
     if spec.choices_are_suggestions:
         return
-    if unknown := [n for n in names if n not in spec.choices]:
+    def allowed(name: str) -> bool:
+        top = name.split(".", maxsplit=1)[0]
+        return name in spec.choices or name in spec.component_choices.get(top, ())
+
+    if unknown := [n for n in names if not allowed(n)]:
         raise ValueError(f"not allowed: {', '.join(unknown)}")
 
 
@@ -455,6 +518,10 @@ def to_form_value(spec: ParamSpec, value: Any) -> FormValue:
         case FieldKind.MULTI_CHOICE:
             items = value if isinstance(value, list | tuple) else [value]
             return [str(v) for v in items]
+        case FieldKind.CHOICE if spec.choice_values:
+            if value in spec.choice_values:
+                return spec.choices[spec.choice_values.index(value)]
+            return "" if value is None else str(value)
         case FieldKind.STRING | FieldKind.CHOICE:
             return "" if value is None else str(value)
         case FieldKind.INTEGER | FieldKind.FLOAT:

@@ -212,3 +212,40 @@ def test_plain_text_is_not_flagged():
     spec = describe_plan({"name": "p", "parameters": [kw("sample_name")]}, CATALOG)
     item = build_item(spec, {"sample_name": "my_sample_3"})
     assert name_conversion_warnings(spec, item, CATALOG) == {}
+
+
+TREE_DEVICES = {
+    "theta": {"is_readable": True, "is_movable": True, "classname": "EpicsMotor", "components": {
+        "user_readback": {"is_readable": True, "is_movable": True, "classname": "EpicsSignalRO"},
+        "user_setpoint": {"is_readable": True, "is_movable": True, "classname": "EpicsSignal"},
+    }},
+    "det1": {"is_readable": True, "classname": "Det", "components": {
+        "exposure": {"is_readable": True, "is_movable": True, "classname": "SignalRW"}}},
+}
+
+
+def test_movable_picker_offers_settable_components_only():
+    catalog = Catalog.from_allowed(TREE_DEVICES, plans=[])
+    spec = describe_plan({"name": "p", "parameters": [
+        kw("motor", annotation={"type": "__MOVABLE__"})]}, catalog)
+    motor = spec.param("motor")
+    assert motor.device_capability == "movable"
+    assert motor.component_choices == {"theta": ("theta.user_setpoint",)}  # not the RO readback
+    item = build_item(spec, {"motor": "theta.user_setpoint"})
+    assert item["kwargs"]["motor"] == "theta.user_setpoint"
+    with pytest.raises(PlanInputError):
+        build_item(spec, {"motor": "theta.user_readback"})
+
+
+def test_literal_parameter_is_a_choice_that_sends_the_typed_value():
+    spec = describe_plan({"name": "p", "parameters": [
+        kw("mode", annotation={"type": "typing.Literal['ellipse', 'linear']"}, default="'ellipse'"),
+        kw("binning", annotation={"type": "typing.Literal[1, 2, 4]"}, default="1"),
+        kw("exposure", annotation={"type": "typing.Annotated[float, 's']"})]}, CATALOG)
+    assert spec.param("mode").field_kind is FieldKind.CHOICE
+    assert spec.param("mode").choices == ("ellipse", "linear")
+    assert spec.param("binning").choices == ("1", "2", "4")
+    assert spec.param("exposure").type_label == "float, s"
+    item = build_item(spec, {"mode": "linear", "binning": "4", "exposure": "0.5"})
+    assert item["kwargs"] == {"mode": "linear", "binning": 4, "exposure": 0.5}
+    assert form_values(spec, item)["binning"] == "4"
