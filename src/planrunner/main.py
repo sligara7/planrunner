@@ -3,7 +3,9 @@
 import argparse
 import logging
 import os
+import sys
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 from planrunner.app import App, AppOptions
 
@@ -42,6 +44,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("-c", "--connect", action="store_true",
                         help="connect as soon as the window opens")
+    parser.add_argument(
+        "--source", action="append", default=[], metavar="PATH",
+        help="a local checkout the plan source viewer reads (the profile collection, "
+             "hextools, ...); repeat for several",
+    )
     parser.add_argument("--debug", action="store_true", help="log debug messages")
     return parser.parse_args(argv)
 
@@ -49,7 +56,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.WARNING)
-    App(AppOptions(server_uri=args.server, api_key=args.api_key, connect=args.connect)).run()
+    options = AppOptions(
+        server_uri=args.server,
+        api_key=args.api_key,
+        connect=args.connect,
+        source_roots=tuple(Path(p) for p in args.source),
+    )
+    sys.exit(App(options).run())
 
 
 if __name__ == "__main__":

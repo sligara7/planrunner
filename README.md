@@ -12,7 +12,8 @@ crashing it or losing the network cannot disturb a running scan.
 ## Run it
 
 ```bash
-pixi run planrunner --server http://localhost:60610 --api-key <key> --connect
+pixi run planrunner --server http://localhost:60610 --api-key <key> --connect \
+    --source ~/git_projects/hex-profile-collection --source ~/git_projects/hextools
 ```
 
 `--server` defaults to `$QSERVER_HTTP_SERVER_URI` or the last server you used; `--api-key`
@@ -41,18 +42,20 @@ change something is greyed out. That makes it usable as a monitor anywhere.
 
 ## The window
 
-Same layout as ScriptRunner, with the server in place of the script folder:
+PySide6 (Qt 6), laid out control-for-control like ScriptRunner:
 
 | ScriptRunner | PlanRunner |
 |---|---|
-| Base folder bar | **Connection bar**: server, API key, connect; open/close the RE environment |
-| — | **Status strip**: manager state, environment, RunEngine, queue size, loop/stop/pause flags |
-| Available scripts | **Available plans** (`plans_allowed`), with a filter box |
-| Script parameters (from argparse) | **Plan parameters** (from the plan's signature): typed fields, device pickers, defaults, ranges, help text |
-| Run now / Add to schedule | **Run now** (`item_execute`) / **Add to queue**, with Repeat and Position |
-| Scheduler table + task details | **Queue** tab (move, edit, duplicate, delete) and **History** tab (results, errors, queue again) |
-| Run / Pause / Resume / Stop | Queue **Start / Stop after current**, RunEngine **Pause / Resume / Stop / Abort / Halt**, **Loop queue** |
-| Console + save to log | Console streams the RE worker's output; save to a log file |
+| Base folder path | **Queue server**: address, connection state, Connect / Disconnect, API key (normally found automatically) |
+| Python environment path | **Environment**: RE Manager, RunEngine and queue state; Open / Close the RE worker environment |
+| Available scripts | **Available plans**, grouped *Beamline profile / hextools / Bluesky*, with a filter |
+| Script parameters (from argparse) | **Plan parameters** (from the plan's signature): typed fields, device pickers, defaults, ranges, help |
+| Run now / Stop run, Iteration / Position / Add to schedule | the same: **Run now** runs without queueing, **Stop run** pauses then stops the running plan |
+| ▼ Show scheduler (hidden until something is added) | the same |
+| Iteration / Run queue / Pause / Resume / Stop / Clear, Sleep(s) / Position / Add sleep | the same, backed by the queueserver; **More ▾** holds Pause now, Stop after current, Abort, Halt, Loop queue |
+| ID / Iter / Name/Details / Status table, Task Details with Edit / Save / Delete | the same: finished runs (Done / Failed / Stopped…), the running plan, pending plans; right-click to move, duplicate or view source |
+| Double-click a script: editor, two side by side | Double-click a plan: **read-only source viewer**, two side by side (reads local checkouts given with `--source`) |
+| Console output / Save to log file | the same: the RE worker's console, streamed |
 
 ### How parameters become fields
 
@@ -83,15 +86,17 @@ src/planrunner/
   main.py           command line
   protocols.py      the seams: QueueServerAPI, CallRunner, Feed, Dispatcher, Dialogs, ...
   events.py         event dataclasses + EventBus (delivers on the UI thread)
-  dispatch.py       QueueDispatcher (drained by the Tk loop), ImmediateDispatcher (tests)
+  dispatch.py       QueueDispatcher (drained by a Qt timer), ImmediateDispatcher (tests)
   client.py         ServerClient: runs API calls on one worker thread
   feeds.py          PollingStatusFeed, ConsoleFeed: read-only background feeds
   plan_params.py    plan description -> form fields -> queue item   (pure)
   type_strings.py   reads queueserver annotation strings            (pure)
   status_text.py    status strip, enabled buttons, item summaries   (pure)
   config.py         JSON preferences file
-  controllers/      behaviour, written against view protocols (no tkinter)
-  ui/               Tk views: each composes widgets and forwards clicks to its controller
+  controllers/      behaviour, written against view protocols (no Qt)
+  ui/               Qt views: each composes widgets and forwards clicks to its controller
+  plan_groups.py    plans grouped by source (profile, hextools, Bluesky)   (pure)
+  sources.py        finds a plan's source in local checkouts               (pure)
 ```
 
 Status arrives by polling today. When the HEX httpserver reaches 0.0.14, a websocket feed can

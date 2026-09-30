@@ -1,57 +1,72 @@
-"""Left panel: the plans the server allows, with a filter box.
+"""Available plans: grouped by where they come from, with a filter box.
 
-Takes the place of ScriptRunner's "Available scripts" list.
+ScriptRunner's "Available scripts". Double-click opens the plan's source, as
+double-clicking a script opens ScriptRunner's editor.
 """
 
-import tkinter as tk
-from tkinter import ttk
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QGroupBox, QLineEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout
 
 from planrunner.controllers.plans import PlansHandlers
-from planrunner.ui.style import LIST_SELECT_BG, LIST_SELECT_FG
+from planrunner.plan_groups import PlanGroup
+
+_PLAN = Qt.ItemDataRole.UserRole
 
 
 class PlanList:
-    def __init__(self, parent: tk.Misc) -> None:
-        self.frame = ttk.LabelFrame(parent, text="   Available plans", padding=0)
-        self._filter = tk.StringVar()
-        filter_row = ttk.Frame(self.frame)
-        filter_row.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(5, 0))
-        ttk.Label(filter_row, text="Filter:").pack(side=tk.LEFT)
-        ttk.Entry(filter_row, textvariable=self._filter).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0)
-        )
-
-        self._list = tk.Listbox(
-            self.frame,
-            selectmode=tk.SINGLE,
-            bd=0,
-            highlightthickness=1,
-            relief="solid",
-            exportselection=False,
-            selectbackground=LIST_SELECT_BG,
-            selectforeground=LIST_SELECT_FG,
-            activestyle="none",
-        )
-        scrollbar = ttk.Scrollbar(self.frame, orient="vertical", command=self._list.yview)
-        self._list.configure(yscrollcommand=scrollbar.set)
-        self._list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=5)
-        self._names: list[str] = []
+    def __init__(self) -> None:
+        self.widget = QGroupBox("Available plans")
+        layout = QVBoxLayout(self.widget)
+        self._filter = QLineEdit()
+        self._filter.setPlaceholderText("Filter plans…")
+        self._filter.setClearButtonEnabled(True)
+        self._tree = QTreeWidget()
+        self._tree.setHeaderHidden(True)
+        self._tree.setRootIsDecorated(False)
+        self._tree.setIndentation(12)
+        layout.addWidget(self._filter)
+        layout.addWidget(self._tree)
 
     def set_handlers(self, handlers: PlansHandlers) -> None:
-        self._filter.trace_add("write", lambda *_: handlers.on_filter_changed(self._filter.get()))
-        self._list.bind("<<ListboxSelect>>", lambda _: self._selected(handlers))
+        self._filter.textChanged.connect(handlers.on_filter_changed)
+        self._tree.itemSelectionChanged.connect(lambda: self._selected(handlers))
+        self._tree.itemDoubleClicked.connect(lambda item, _: self._activated(item, handlers))
 
-    def show_plans(self, names: list[str], selected: str | None) -> None:
-        self._names = list(names)
-        self._list.delete(0, tk.END)
-        for name in names:
-            self._list.insert(tk.END, name)
-        if selected in self._names:
-            index = self._names.index(selected)
-            self._list.selection_set(index)
-            self._list.see(index)
+    def show_plans(self, groups: list[PlanGroup], selected: str | None) -> None:
+        self._tree.blockSignals(True)
+        self._tree.clear()
+        bold = QFont()
+        bold.setBold(True)
+        for group in groups:
+            header = QTreeWidgetItem([f"{group.title}  ({len(group.names)})"])
+            header.setFont(0, bold)
+            header.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self._tree.addTopLevelItem(header)
+            for name in group.names:
+                item = QTreeWidgetItem([name])
+                item.setData(0, _PLAN, name)
+                header.addChild(item)
+                if name == selected:
+                    item.setSelected(True)
+                    self._tree.setCurrentItem(item)
+            header.setExpanded(True)
+        self._tree.blockSignals(False)
+
+    def names(self) -> list[str]:
+        """All plan names shown (for tests)."""
+        names: list[str] = []
+        for g in range(self._tree.topLevelItemCount()):
+            if (group := self._tree.topLevelItem(g)) is not None:
+                names += [group.child(i).data(0, _PLAN) for i in range(group.childCount())]
+        return names
+
+    @staticmethod
+    def _activated(item: QTreeWidgetItem, handlers: PlansHandlers) -> None:
+        if name := item.data(0, _PLAN):
+            handlers.on_plan_activated(name)
 
     def _selected(self, handlers: PlansHandlers) -> None:
-        if selection := self._list.curselection():
-            handlers.on_plan_selected(self._names[selection[0]])
+        items = self._tree.selectedItems()
+        if items and (name := items[0].data(0, _PLAN)):
+            handlers.on_plan_selected(name)

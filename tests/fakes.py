@@ -41,6 +41,7 @@ class FakeQueueServer:
     calls: list[tuple[str, tuple, dict]] = field(default_factory=list)
     monitor: FakeConsoleMonitor = field(default_factory=FakeConsoleMonitor)
     closed: bool = False
+    _uids: int = 0
 
     @property
     def console_monitor(self) -> FakeConsoleMonitor:
@@ -86,7 +87,11 @@ class FakeQueueServer:
 
     def item_add_batch(self, items, *, pos=None) -> JSON:
         self._record("item_add_batch", items, pos=pos)
-        return {"success": True}
+        added = []
+        for item in items:
+            self._uids += 1
+            added.append({**item, "item_uid": f"uid-{self._uids}"})
+        return {"success": True, "items": added}
 
     def item_update(self, item, *, replace=None) -> JSON:
         self._record("item_update", item, replace=replace)

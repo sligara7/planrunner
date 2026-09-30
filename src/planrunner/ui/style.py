@@ -1,27 +1,27 @@
-"""Look and feel, carried over from ScriptRunner (``scriptrunner/lib/utilities.py``)."""
+"""Look and feel: ScriptRunner's calm light-grey window with blue accents, in Qt.
 
-import os
-import tkinter as tk
-import tkinter.font as tkfont
-from tkinter import ttk
+Colours follow ScriptRunner (``scriptrunner/lib/utilities.py``). The palette is set
+explicitly, so a dark desktop theme cannot turn the window unreadable.
+"""
+
+from importlib.resources import files
+
+from PySide6.QtGui import QColor, QFont, QIcon, QPalette
+from PySide6.QtWidgets import QApplication
 
 from planrunner.status_text import Tone
 
-FONT_FAMILY = "Segoe UI" if os.name == "nt" else "Helvetica"
-FONT_SIZE = 12
-PARAM_FONT_SIZE = 11
-CONSOLE_FONT = ("Courier New", 10)
-TTK_THEME = "clam"
-MAIN_WINDOW_RATIO = 0.85
-
-BG_OUTPUT = "#f0f0f0"
-FG_OUTPUT = "black"
-LIST_SELECT_BG = "#cce8ff"
-LIST_SELECT_FG = "black"
 ACCENT = "#0055aa"
-HELP_FG = "#555555"
-ERROR_FG = "#c00000"
+HELP = "#555555"
+ERROR = "#c00000"
+MUTED = "#888888"
+WINDOW_BG = "#ececec"
+CONSOLE_BG = "#f4f4f4"
+SELECT_BG = "#cce8ff"
 RUNNING_BG = "#dff5e1"
+MONO = QFont("Monospace")
+MONO.setStyleHint(QFont.StyleHint.TypeWriter)
+MONO.setPointSize(10)
 
 TONE_COLORS = {
     Tone.NORMAL: "#222222",
@@ -31,29 +31,45 @@ TONE_COLORS = {
     Tone.BAD: "#c00000",
 }
 
+STYLESHEET = f"""
+QGroupBox {{ font-weight: normal; margin-top: 1.1em; border: 1px solid #c8c8c8;
+             border-radius: 3px; padding-top: 4px; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #333; }}
+QPushButton {{ padding: 4px 14px; }}
+QTableWidget, QTreeWidget, QListWidget {{ selection-background-color: {SELECT_BG};
+                                          selection-color: black; }}
+QLabel[role="title"] {{ color: {ACCENT}; font-size: 13pt; }}
+QLabel[role="type"] {{ color: {ACCENT}; }}
+QLabel[role="help"] {{ color: {HELP}; }}
+QLabel[role="error"] {{ color: {ERROR}; }}
+QLabel[role="path"] {{ color: {ACCENT}; font-style: italic; }}
+"""
 
-def apply_style(root: tk.Tk) -> ttk.Style:
-    style = ttk.Style(root)
-    style.theme_use(TTK_THEME)
-    default_font = tkfont.nametofont("TkDefaultFont")
-    default_font.configure(family=FONT_FAMILY, size=FONT_SIZE)
-    root.option_add("*Font", default_font)
-    style.configure("TButton", padding=5)
-    style.configure("TEntry", padding=5)
-    style.configure("TLabelframe", padding=5)
-    style.configure("TLabelframe.Label", font=(FONT_FAMILY, FONT_SIZE), foreground="#333")
-    style.configure("Path.TLabel", foreground=ACCENT, font=(FONT_FAMILY, FONT_SIZE, "italic"))
-    style.configure("Title.TLabel", foreground=ACCENT, font=(FONT_FAMILY, FONT_SIZE + 1, "bold"))
-    style.configure("Help.TLabel", foreground=HELP_FG, font=(FONT_FAMILY, PARAM_FONT_SIZE))
-    style.configure("Error.TLabel", foreground=ERROR_FG, font=(FONT_FAMILY, PARAM_FONT_SIZE))
-    style.configure("Param.TLabel", font=(FONT_FAMILY, PARAM_FONT_SIZE))
-    style.configure("Required.TLabel", font=(FONT_FAMILY, PARAM_FONT_SIZE, "bold"))
-    style.configure("Type.TLabel", foreground=ACCENT, font=(FONT_FAMILY, PARAM_FONT_SIZE))
-    style.configure("Treeview", rowheight=25)
-    style.configure("Toggle.TButton", font=(FONT_FAMILY, 11))
-    style.configure("Small.TButton", padding=2, font=(FONT_FAMILY, 9))
-    style.configure("StatusName.TLabel", foreground="#666", font=(FONT_FAMILY, 10))
-    for tone, color in TONE_COLORS.items():
-        style.configure(f"{tone.value}.Status.TLabel", foreground=color,
-                        font=(FONT_FAMILY, 11, "bold"))
-    return style
+
+def apply_style(app: QApplication) -> None:
+    app.setStyle("Fusion")
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(WINDOW_BG))
+    palette.setColor(QPalette.ColorRole.Base, QColor("white"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#f7f7f7"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#111111"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#111111"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#e4e4e4"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#111111"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(SELECT_BG))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("black"))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, QColor(MUTED))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, QColor(MUTED))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, QColor(MUTED))
+    app.setPalette(palette)
+    app.setStyleSheet(STYLESHEET)
+    app.setWindowIcon(app_icon())
+
+
+def app_icon() -> QIcon:
+    """ScriptRunner's icon (Apache-2.0, Nghia Vo), which HEX users already know."""
+    return QIcon(str(files("planrunner.assets") / "planrunner.png"))
+
+
+def tone_color(tone: Tone) -> str:
+    return TONE_COLORS[tone]

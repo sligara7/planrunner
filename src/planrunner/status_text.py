@@ -40,6 +40,8 @@ class Controls:
     pause: bool = False
     resume: bool = False
     stop_run: bool = False
+    stop: bool = False
+    """'Stop run': pause now if running, then stop."""
     abort: bool = False
     halt: bool = False
     run_now: bool = False
@@ -71,6 +73,7 @@ def controls_for(status: JSON | None, allowed: Permissions | None = None) -> Con
         pause=plan and running and not status.get("pause_pending"),
         resume=plan and paused,
         stop_run=plan and paused,
+        stop=plan and (running or paused),
         abort=plan and paused,
         halt=plan and paused,
         run_now=allowed.execute and idle and env,

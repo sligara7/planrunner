@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from planrunner.permissions import Permissions
+from planrunner.plan_params import Catalog
 from planrunner.protocols import JSON, Dispatcher, QueueServerAPI
 
 # --- Connection ---------------------------------------------------------------
@@ -88,10 +89,32 @@ class Notice:
 
 
 @dataclass(frozen=True, slots=True)
-class EditItemRequested:
-    """Load a queued item into the plan form for editing."""
+class CatalogUpdated:
+    """The allowed plans (by name) and devices were (re)loaded."""
 
-    item: JSON
+    plans: dict[str, JSON]
+    catalog: Catalog
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogCleared:
+    """No plans are known (disconnected, or this connection may not list them)."""
+
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class ItemAdded:
+    """Items were added to the queue; ``copies`` are (item_uid, k, n) for 'Iter k/n'."""
+
+    copies: tuple[tuple[str, int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRequested:
+    """Show a plan's source code."""
+
+    plan_name: str
 
 
 # --- Bus ----------------------------------------------------------------------

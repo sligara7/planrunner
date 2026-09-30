@@ -1,62 +1,55 @@
-"""Tk implementations of the small UI services controllers depend on."""
+"""Qt implementations of the small UI services controllers depend on."""
 
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QStatusBar, QWidget
 
 from planrunner.dispatch import QueueDispatcher
 
 
-class TkDialogs:
-    """``planrunner.protocols.Dialogs`` using tkinter's standard dialogs."""
+class QtDialogs:
+    """``planrunner.protocols.Dialogs`` using Qt's standard dialogs."""
 
-    def __init__(self, root: tk.Misc) -> None:
-        self._root = root
+    def __init__(self, parent: QWidget) -> None:
+        self._parent = parent
 
     def confirm(self, title: str, message: str) -> bool:
-        return messagebox.askyesno(title, message, parent=self._root)
+        answer = QMessageBox.question(self._parent, title, message)
+        return answer == QMessageBox.StandardButton.Yes
 
     def error(self, title: str, message: str) -> None:
-        messagebox.showerror(title, message, parent=self._root)
+        QMessageBox.critical(self._parent, title, message)
 
     def ask_save_path(self, title: str, initial_file: str) -> str | None:
-        path = filedialog.asksaveasfilename(
-            parent=self._root,
-            title=title,
-            initialdir=str(Path.home()),
-            initialfile=initial_file,
-            defaultextension=".txt",
-            filetypes=(("Text files", "*.txt"), ("All files", "*.*")),
+        path, _ = QFileDialog.getSaveFileName(
+            self._parent, title, str(Path.home() / initial_file),
+            "Text files (*.txt);;All files (*)",
         )
         return path or None
 
 
 class StatusBar:
-    """``planrunner.protocols.StatusLine``: the sunken one-line bar at the bottom."""
+    """``planrunner.protocols.StatusLine``: the status bar along the bottom."""
 
-    def __init__(self, parent: tk.Misc) -> None:
-        self._var = tk.StringVar()
-        self.frame = ttk.Label(parent, textvariable=self._var, relief=tk.SUNKEN, anchor="w",
-                               padding=(5, 2))
+    def __init__(self, bar: QStatusBar) -> None:
+        self._bar = bar
 
     def set_message(self, text: str) -> None:
-        self._var.set(text)
+        self._bar.showMessage(text)
 
 
-class TkPump:
-    """Drains a ``QueueDispatcher`` on the Tk event loop, every ``interval_ms``."""
+class QtPump:
+    """Drains a ``QueueDispatcher`` on the Qt event loop every ``interval_ms``."""
 
-    def __init__(self, root: tk.Misc, dispatcher: QueueDispatcher, interval_ms: int = 50) -> None:
-        self._root = root
+    def __init__(self, dispatcher: QueueDispatcher, interval_ms: int = 50) -> None:
         self._dispatcher = dispatcher
-        self._interval_ms = interval_ms
-        self._job: str | None = None
+        self._timer = QTimer()
+        self._timer.setInterval(interval_ms)
+        self._timer.timeout.connect(dispatcher.drain)
 
     def start(self) -> None:
-        self._dispatcher.drain()
-        self._job = self._root.after(self._interval_ms, self.start)
+        self._timer.start()
 
     def stop(self) -> None:
-        if self._job is not None:
-            self._root.after_cancel(self._job)
-            self._job = None
+        self._timer.stop()

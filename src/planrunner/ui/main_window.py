@@ -1,87 +1,124 @@
-"""The main window: builds each panel and lays them out the way ScriptRunner does.
+"""The main window, laid out as ScriptRunner is (see scriptrunner/figs/fig1-2):
 
-    row 0  connection bar
-    row 1  status strip
-    row 2  plan list | plan parameters
-    row 3  ── ▲ Hide scheduler ──
-    row 4  scheduler (queue, history, controls)
-    row 5  console
-    row 6  status bar
+    Queue server bar            (ScriptRunner: Base folder path)
+    Environment bar             (ScriptRunner: Python environment path)
+    Available plans | Plan parameters
+    ── ▼ Show scheduler ──
+    Scheduler                   (hidden until something is added)
+    Console output | Save to log file
+    status bar
 """
 
-import tkinter as tk
-from collections.abc import Callable
-from tkinter import ttk
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QMainWindow,
+    QPushButton,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
-from planrunner.ui.connection_bar import ConnectionBar
 from planrunner.ui.console_panel import ConsolePanel
 from planrunner.ui.plan_form import PlanForm
 from planrunner.ui.plan_list import PlanList
 from planrunner.ui.scheduler import SchedulerPanel
 from planrunner.ui.services import StatusBar
-from planrunner.ui.status_strip import StatusStrip
-from planrunner.ui.style import MAIN_WINDOW_RATIO, apply_style
+from planrunner.ui.source_viewer import SourceViewer
+from planrunner.ui.top_bars import EnvironmentBar, ServerBar, TopBars
 
-_SCHEDULER_ROW = 4
-_CONSOLE_ROW = 5
+SCREEN_FRACTION = 0.85
 
 
 class MainWindow:
-    def __init__(self, title: str = "Plan Runner", root: tk.Tk | None = None) -> None:
-        self.root = root or tk.Tk()
-        self.root.title(title)
-        apply_style(self.root)
+    def __init__(self, title: str = "Plan Runner") -> None:
+        self.window = _Window()
+        self.window.setWindowTitle(title)
+
+        self.server_bar = ServerBar()
+        self.environment_bar = EnvironmentBar()
+        self.top_bars = TopBars(self.server_bar, self.environment_bar)
+        self.plan_list = PlanList()
+        self.plan_form = PlanForm()
+        self.scheduler = SchedulerPanel(reveal=lambda: self.set_scheduler_visible(True))
+        self.console = ConsolePanel()
+        self.status_bar = StatusBar(self.window.statusBar())
+        self.source_viewer = SourceViewer(self.window)
+
+        middle = QSplitter(Qt.Orientation.Horizontal)
+        middle.addWidget(self.plan_list.widget)
+        middle.addWidget(self.plan_form.widget)
+        middle.setStretchFactor(0, 1)
+        middle.setStretchFactor(1, 3)
+
+        self.scheduler_visible = False
+        self._toggle = QPushButton()
+        self._toggle.clicked.connect(lambda: self.set_scheduler_visible(not self.scheduler_visible))
+        toggle_row = QHBoxLayout()
+        toggle_row.addWidget(_line(), 1)
+        toggle_row.addWidget(self._toggle)
+        toggle_row.addWidget(_line(), 1)
+        scheduler_block = QWidget()
+        block = QVBoxLayout(scheduler_block)
+        block.setContentsMargins(0, 0, 0, 0)
+        block.addLayout(toggle_row)
+        block.addWidget(self.scheduler.widget, 1)
+
+        body = QSplitter(Qt.Orientation.Vertical)
+        body.addWidget(middle)
+        body.addWidget(scheduler_block)
+        body.addWidget(self.console.widget)
+        body.setStretchFactor(0, 5)
+        body.setStretchFactor(1, 4)
+        body.setStretchFactor(2, 2)
+        body.setChildrenCollapsible(False)
+
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(6, 6, 6, 0)
+        layout.addWidget(self.server_bar.widget)
+        layout.addWidget(self.environment_bar.widget)
+        layout.addWidget(body, 1)
+        self.window.setCentralWidget(central)
+
+        self.set_scheduler_visible(False)  # as ScriptRunner starts: scheduler hidden
         self._fit_to_screen()
 
-        self.connection_bar = ConnectionBar(self.root)
-        self.status_strip = StatusStrip(self.root)
-        middle = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        self.plan_list = PlanList(middle)
-        self.plan_form = PlanForm(middle)
-        middle.add(self.plan_list.frame, weight=1)
-        middle.add(self.plan_form.frame, weight=3)
-        toggle_row = ttk.Frame(self.root)
-        self.scheduler = SchedulerPanel(self.root)
-        self.console = ConsolePanel(self.root)
-        self.status_bar = StatusBar(self.root)
+    def set_scheduler_visible(self, visible: bool) -> None:
+        self.scheduler_visible = visible
+        self.scheduler.widget.setVisible(visible)
+        self._toggle.setText("▲ Hide scheduler" if visible else "▼ Show scheduler")
 
-        self.connection_bar.frame.grid(row=0, column=0, sticky="ew", padx=5, pady=(0, 5))
-        self.status_strip.frame.grid(row=1, column=0, sticky="ew", padx=5)
-        middle.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
-        toggle_row.grid(row=3, column=0, sticky="ew", padx=5)
-        self.scheduler.frame.grid(row=_SCHEDULER_ROW, column=0, sticky="nsew", padx=5, pady=(5, 0))
-        self.console.frame.grid(row=_CONSOLE_ROW, column=0, sticky="nsew", padx=5, pady=5)
-        self.status_bar.frame.grid(row=6, column=0, sticky="ew", padx=5, pady=(0, 5))
+    def on_close(self, callback) -> None:
+        self.window.close_callback = callback
 
-        self._toggle = ttk.Button(toggle_row, style="Toggle.TButton", width=20,
-                                  command=self.toggle_scheduler)
-        ttk.Separator(toggle_row).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self._toggle.pack(side=tk.LEFT, padx=10)
-        ttk.Separator(toggle_row).pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        self.root.grid_columnconfigure(0, weight=1)
-        self.root.grid_rowconfigure(2, weight=5)
-        self._scheduler_visible = False
-        self.toggle_scheduler()  # the queue is central here, so start with it shown
-
-    def toggle_scheduler(self) -> None:
-        self._scheduler_visible = not self._scheduler_visible
-        if self._scheduler_visible:
-            self.scheduler.frame.grid()
-            self._toggle.configure(text="▲ Hide scheduler")
-            self.root.grid_rowconfigure(_SCHEDULER_ROW, weight=4)
-        else:
-            self.scheduler.frame.grid_remove()
-            self._toggle.configure(text="▼ Show scheduler")
-            self.root.grid_rowconfigure(_SCHEDULER_ROW, weight=0)
-        self.root.grid_rowconfigure(_CONSOLE_ROW, weight=2)
-
-    def on_close(self, callback: Callable[[], None]) -> None:
-        self.root.protocol("WM_DELETE_WINDOW", callback)
+    def show(self) -> None:
+        self.window.show()
 
     def _fit_to_screen(self) -> None:
-        width = int(self.root.winfo_screenwidth() * MAIN_WINDOW_RATIO)
-        height = int(self.root.winfo_screenheight() * MAIN_WINDOW_RATIO)
-        x = (self.root.winfo_screenwidth() - width) // 2
-        y = (self.root.winfo_screenheight() - height) // 2
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        screen = self.window.screen().availableGeometry()
+        width = int(screen.width() * SCREEN_FRACTION)
+        height = int(screen.height() * SCREEN_FRACTION)
+        self.window.resize(width, height)
+        self.window.move(screen.x() + (screen.width() - width) // 2,
+                         screen.y() + (screen.height() - height) // 2)
+
+
+class _Window(QMainWindow):
+    """A QMainWindow that reports its close to a callback (Qt delivers close as an event)."""
+
+    close_callback = None
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
+        if self.close_callback is not None:
+            self.close_callback()
+        event.accept()
+
+
+def _line() -> QFrame:
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setFrameShadow(QFrame.Shadow.Sunken)
+    return line

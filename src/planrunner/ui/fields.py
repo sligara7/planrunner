@@ -1,21 +1,31 @@
-"""One input widget per ``FieldKind``.
+"""One input widget per ``FieldKind``, and the parameter grid built from them.
 
-``make_field`` looks the kind up in a factory table, so supporting a new kind of
-parameter means adding one class and one table entry.
+``ParamGrid`` lays parameters out as ScriptRunner does, one row each:
+name | [type] | input | help. The Plan parameters panel and Task Details both use it.
+Supporting a new kind of parameter means one widget class and one table entry.
 """
 
-import tkinter as tk
 from collections.abc import Callable, Mapping
-from tkinter import ttk
 from typing import Protocol
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QGridLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QWidget,
+)
+
 from planrunner.plan_params import FieldKind, FormValue, ParamSpec
-from planrunner.ui.style import LIST_SELECT_BG, LIST_SELECT_FG
 
 
 class FieldWidget(Protocol):
     @property
-    def widget(self) -> tk.Widget: ...
+    def widget(self) -> QWidget: ...
 
     def get(self) -> FormValue: ...
 
@@ -23,108 +33,103 @@ class FieldWidget(Protocol):
 
 
 class TextField:
-    def __init__(self, parent: tk.Misc, spec: ParamSpec, width: int = 22) -> None:
-        self._var = tk.StringVar()
-        self._entry = ttk.Entry(parent, textvariable=self._var, width=width)
+    def __init__(self, spec: ParamSpec, width: int = 180) -> None:
+        self._edit = QLineEdit()
+        self._edit.setMinimumWidth(width)
+        if spec.allows_none and not spec.required:
+            self._edit.setPlaceholderText("default")
 
     @property
-    def widget(self) -> tk.Widget:
-        return self._entry
+    def widget(self) -> QWidget:
+        return self._edit
 
     def get(self) -> FormValue:
-        return self._var.get()
+        return self._edit.text()
 
     def set(self, value: FormValue) -> None:
-        self._var.set(str(value))
+        self._edit.setText(str(value))
 
 
 class CheckField:
-    def __init__(self, parent: tk.Misc, spec: ParamSpec) -> None:
-        self._var = tk.BooleanVar()
-        self._check = ttk.Checkbutton(parent, variable=self._var)
+    def __init__(self, spec: ParamSpec) -> None:
+        self._box = QCheckBox()
 
     @property
-    def widget(self) -> tk.Widget:
-        return self._check
+    def widget(self) -> QWidget:
+        return self._box
 
     def get(self) -> FormValue:
-        return self._var.get()
+        return self._box.isChecked()
 
     def set(self, value: FormValue) -> None:
-        self._var.set(bool(value))
+        self._box.setChecked(bool(value))
 
 
 class ChoiceField:
-    """A drop-down. Read-only for a closed set; editable when choices are suggestions."""
+    """A drop-down: a closed set, or editable when the choices are only suggestions."""
 
-    def __init__(self, parent: tk.Misc, spec: ParamSpec) -> None:
-        self._var = tk.StringVar()
-        choices = list(spec.choices)
+    def __init__(self, spec: ParamSpec) -> None:
+        self._combo = QComboBox()
+        self._combo.setMinimumWidth(180)
+        self._combo.setEditable(spec.choices_are_suggestions)
         if not spec.required and not spec.choices_are_suggestions:
-            choices.insert(0, "")  # lets the user go back to "use the default"
-        self._combo = ttk.Combobox(
-            parent,
-            textvariable=self._var,
-            values=choices,
-            width=22,
-            state="normal" if spec.choices_are_suggestions else "readonly",
-        )
+            self._combo.addItem("")  # back to "use the default"
+        self._combo.addItems(list(spec.choices))
 
     @property
-    def widget(self) -> tk.Widget:
+    def widget(self) -> QWidget:
         return self._combo
 
     def get(self) -> FormValue:
-        return self._var.get()
+        return self._combo.currentText()
 
     def set(self, value: FormValue) -> None:
-        self._var.set(str(value))
+        text = str(value)
+        index = self._combo.findText(text)
+        if index >= 0:
+            self._combo.setCurrentIndex(index)
+        elif self._combo.isEditable():
+            self._combo.setEditText(text)
 
 
 class MultiChoiceField:
-    """A short list where several names can be ticked."""
+    """A short list of names, each with a checkbox."""
 
-    def __init__(self, parent: tk.Misc, spec: ParamSpec) -> None:
-        self._frame = ttk.Frame(parent)
-        self._choices = list(spec.choices)
-        self._list = tk.Listbox(
-            self._frame,
-            selectmode=tk.MULTIPLE,
-            exportselection=False,
-            height=min(max(len(self._choices), 2), 6),
-            width=24,
-            selectbackground=LIST_SELECT_BG,
-            selectforeground=LIST_SELECT_FG,
-            activestyle="none",
-        )
-        for name in self._choices:
-            self._list.insert(tk.END, name)
-        self._list.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        if len(self._choices) > 6:
-            scrollbar = ttk.Scrollbar(self._frame, orient="vertical", command=self._list.yview)
-            self._list.configure(yscrollcommand=scrollbar.set)
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    def __init__(self, spec: ParamSpec) -> None:
+        self._list = QListWidget()
+        for name in spec.choices:
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self._list.addItem(item)
+        rows = min(max(len(spec.choices), 2), 6)
+        self._list.setFixedHeight(rows * self._list.sizeHintForRow(0) + 6)
+        self._list.setMinimumWidth(180)
 
     @property
-    def widget(self) -> tk.Widget:
-        return self._frame
+    def widget(self) -> QWidget:
+        return self._list
 
     def get(self) -> FormValue:
-        return [self._choices[i] for i in self._list.curselection()]
+        return [
+            self._list.item(i).text()
+            for i in range(self._list.count())
+            if self._list.item(i).checkState() == Qt.CheckState.Checked
+        ]
 
     def set(self, value: FormValue) -> None:
-        selected = set(value) if isinstance(value, list) else set()
-        self._list.selection_clear(0, tk.END)
-        for i, name in enumerate(self._choices):
-            if name in selected:
-                self._list.selection_set(i)
+        chosen = set(value) if isinstance(value, list) else set()
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            checked = item.text() in chosen
+            item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
 
 
-def _expression_field(parent: tk.Misc, spec: ParamSpec) -> FieldWidget:
-    return ChoiceField(parent, spec) if spec.choices else TextField(parent, spec, width=30)
+def _expression_field(spec: ParamSpec) -> FieldWidget:
+    return ChoiceField(spec) if spec.choices else TextField(spec, width=240)
 
 
-type FieldFactory = Callable[[tk.Misc, ParamSpec], FieldWidget]
+type FieldFactory = Callable[[ParamSpec], FieldWidget]
 
 DEFAULT_FACTORIES: Mapping[FieldKind, FieldFactory] = {
     FieldKind.INTEGER: TextField,
@@ -137,9 +142,71 @@ DEFAULT_FACTORIES: Mapping[FieldKind, FieldFactory] = {
 }
 
 
-def make_field(
-    parent: tk.Misc,
-    spec: ParamSpec,
-    factories: Mapping[FieldKind, FieldFactory] = DEFAULT_FACTORIES,
-) -> FieldWidget:
-    return factories[spec.field_kind](parent, spec)
+class ParamGrid:
+    """name | [type] | input | help, one row per parameter."""
+
+    def __init__(self, factories: Mapping[FieldKind, FieldFactory] = DEFAULT_FACTORIES) -> None:
+        self._factories = factories
+        self.widget = QWidget()
+        self._layout = QGridLayout(self.widget)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setHorizontalSpacing(14)
+        self._layout.setColumnStretch(3, 1)
+        self._fields: dict[str, FieldWidget] = {}
+        self._help: dict[str, tuple[QLabel, str]] = {}
+
+    def show(self, params: tuple[ParamSpec, ...], values: Mapping[str, FormValue]) -> None:
+        self.clear()
+        for row, param in enumerate(params):
+            name = QLabel(f"{param.name} *" if param.required else param.name)
+            if param.required:
+                name.setStyleSheet("font-weight: bold;")
+            kind = QLabel(f"[{param.type_label}]")
+            kind.setProperty("role", "type")
+            field = self._factories[param.field_kind](param)
+            field.set(values.get(param.name, param.initial_value()))
+            help_text = _help_text(param)
+            help_label = QLabel(help_text)
+            help_label.setProperty("role", "help")
+            help_label.setWordWrap(True)
+            top = Qt.AlignmentFlag.AlignTop
+            self._layout.addWidget(name, row, 0, top)
+            self._layout.addWidget(kind, row, 1, top)
+            self._layout.addWidget(field.widget, row, 2, top)
+            self._layout.addWidget(help_label, row, 3, top)
+            self._fields[param.name] = field
+            self._help[param.name] = (help_label, help_text)
+
+    def clear(self) -> None:
+        while (item := self._layout.takeAt(0)) is not None:
+            if (w := item.widget()) is not None:
+                w.deleteLater()
+        self._fields.clear()
+        self._help.clear()
+
+    def values(self) -> dict[str, FormValue]:
+        return {name: field.get() for name, field in self._fields.items()}
+
+    def field(self, name: str) -> FieldWidget:
+        return self._fields[name]
+
+    def set_read_only(self, read_only: bool) -> None:
+        for field in self._fields.values():
+            field.widget.setEnabled(not read_only)
+
+    def show_errors(self, errors: Mapping[str, str]) -> None:
+        for name, (label, help_text) in self._help.items():
+            error = errors.get(name)
+            label.setText(f"⚠ {error}" if error else help_text)
+            label.setProperty("role", "error" if error else "help")
+            label.style().unpolish(label)
+            label.style().polish(label)
+
+
+def _help_text(param: ParamSpec) -> str:
+    text = " ".join(param.description.split())
+    if param.minimum is not None or param.maximum is not None:
+        low = f"{param.minimum:g}" if param.minimum is not None else "…"
+        high = f"{param.maximum:g}" if param.maximum is not None else "…"
+        text = f"{text} (range {low} to {high})".strip()
+    return text

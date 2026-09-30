@@ -1,1 +1,1 @@
-"""Tk views and services. Views compose widgets; they hold no behaviour."""
+"""Qt views and services. Views compose widgets and forward user actions to controllers."""

@@ -1,37 +1,38 @@
-"""The plan list and the plan parameter form: pick a plan, fill it in, queue it."""
+"""Available plans and Plan parameters: pick a plan, fill it in, run it or schedule it.
+
+The form always belongs to the plan selected in the list: when the server's plan
+list changes (e.g. the environment opens), the form is rebuilt for the same plan,
+or cleared if that plan is no longer offered.
+"""
 
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from planrunner.controllers.catalog import CatalogStore
 from planrunner.controllers.commands import Commands
+from planrunner.controllers.run_control import RunControl
 from planrunner.events import (
-    AllowedChanged,
-    Connected,
-    Disconnected,
-    EditItemRequested,
-    Notice,
+    CatalogCleared,
+    CatalogUpdated,
+    ItemAdded,
     PermissionsKnown,
+    SourceRequested,
 )
-from planrunner.plan_params import (
-    Catalog,
-    FormValue,
-    PlanInputError,
-    PlanSpec,
-    build_item,
-    describe_plan,
-    form_values,
-)
-from planrunner.protocols import JSON, Dialogs, EventPublisher, EventSubscriber
+from planrunner.plan_groups import PlanGroup, group_plans
+from planrunner.plan_params import FormValue, PlanInputError, PlanSpec, build_item
+from planrunner.protocols import JSON, Dialogs, EventBusLike
 
 
 @dataclass(frozen=True, slots=True)
-class QueueOptions:
-    repeat: int = 1
-    position: int | None = None
-    """1-based queue position to insert at; ``None`` appends to the back."""
+class ScheduleOptions:
+    """ScriptRunner's 'Iteration' and 'Position' fields."""
+
+    iterations: int = 1
+    position: int = -1
+    """1-based queue position; -1 (or anything below 1) means the end of the queue."""
 
     def server_pos(self) -> int | str:
-        return "back" if self.position is None else max(self.position - 1, 0)
+        return "back" if self.position < 1 else self.position - 1
 
 
 class PlansHandlers(Protocol):
@@ -39,21 +40,21 @@ class PlansHandlers(Protocol):
 
     def on_plan_selected(self, name: str) -> None: ...
 
-    def on_add_to_queue(self) -> None: ...
+    def on_plan_activated(self, name: str) -> None:
+        """Double-click: show the plan's source."""
+        ...
 
     def on_run_now(self) -> None: ...
 
-    def on_reset_form(self) -> None: ...
+    def on_stop_run(self) -> None: ...
 
-    def on_save_edit(self) -> None: ...
-
-    def on_cancel_edit(self) -> None: ...
+    def on_add_to_schedule(self) -> None: ...
 
 
 class PlanListView(Protocol):
     def set_handlers(self, handlers: PlansHandlers) -> None: ...
 
-    def show_plans(self, names: list[str], selected: str | None) -> None: ...
+    def show_plans(self, groups: list[PlanGroup], selected: str | None) -> None: ...
 
 
 class PlanFormView(Protocol):
@@ -65,30 +66,19 @@ class PlanFormView(Protocol):
 
     def read_values(self) -> dict[str, FormValue]: ...
 
-    def read_queue_options(self) -> QueueOptions: ...
+    def read_schedule_options(self) -> ScheduleOptions: ...
 
     def show_errors(self, errors: dict[str, str]) -> None: ...
 
-    def enable_submit(self, add: bool, run_now: bool) -> None:
-        """Enable Add to queue / Save changes (``add``) and Run now (``run_now``)."""
-        ...
-
-    def set_edit_mode(self, editing: str | None) -> None:
-        """Show the 'save changes' buttons for the named item, or the normal ones for None."""
-        ...
+    def enable_submit(self, schedule: bool, run_now: bool, stop: bool) -> None: ...
 
 
 @dataclass(slots=True)
 class _State:
-    plans: dict[str, JSON] = field(default_factory=dict)
-    catalog: Catalog = field(default_factory=Catalog)
     filter_text: str = ""
     current: PlanSpec | None = None
     remembered: dict[str, dict[str, FormValue]] = field(default_factory=dict)
     """Values typed into each plan's form, kept when switching plans (as ScriptRunner does)."""
-    editing: JSON | None = None
-    pending_edit: JSON | None = None
-    """An item to edit that arrived before the plans were loaded."""
 
 
 class PlansController:
@@ -97,128 +87,104 @@ class PlansController:
         *,
         plan_list: PlanListView,
         form: PlanFormView,
+        catalog: CatalogStore,
         commands: Commands,
-        bus: EventSubscriber,
-        publisher: EventPublisher,
+        run_control: RunControl,
+        bus: EventBusLike,
         dialogs: Dialogs,
     ) -> None:
         self._list = plan_list
         self._form = form
+        self._catalog = catalog
         self._commands = commands
-        self._publish = publisher.publish
+        self._run_control = run_control
+        self._bus = bus
         self._dialogs = dialogs
         self._state = _State()
-        self._can_read_plans = True
 
         plan_list.set_handlers(self)
         form.set_handlers(self)
         form.clear("Connect to a server to see its plans.")
-        bus.subscribe(Connected, lambda _: self._load_allowed())
-        bus.subscribe(AllowedChanged, lambda _: self._load_allowed())
-        bus.subscribe(Disconnected, lambda _: self._reset())
-        bus.subscribe(EditItemRequested, lambda event: self._start_edit(event.item))
-        bus.subscribe(PermissionsKnown, self._on_permissions)
+        bus.subscribe(CatalogUpdated, lambda _: self._on_catalog())
+        bus.subscribe(CatalogCleared, lambda event: self._on_cleared(event.reason))
+        bus.subscribe(PermissionsKnown, lambda event: form.enable_submit(
+            schedule=event.allowed.edit_queue, run_now=event.allowed.execute,
+            stop=event.allowed.control_plan))
 
     # --- Handlers ---------------------------------------------------------------
 
     def on_filter_changed(self, text: str) -> None:
-        self._state.filter_text = text.strip().lower()
+        self._state.filter_text = text
         self._show_list()
 
     def on_plan_selected(self, name: str) -> None:
-        if self._state.editing is not None:
-            self.on_cancel_edit()
         self._remember_current()
         self._show_plan(name)
 
-    def on_add_to_queue(self) -> None:
-        if (item := self._build()) is None:
-            return
-        options = self._form.read_queue_options()
-        items = [item] * max(options.repeat, 1)
-        count = f"{len(items)} x " if len(items) > 1 else ""
-        self._commands.send(
-            f"Add {count}{item['name']} to queue",
-            lambda api: api.item_add_batch(items, pos=options.server_pos()),
-        )
+    def on_plan_activated(self, name: str) -> None:
+        self._bus.publish(SourceRequested(name))
 
     def on_run_now(self) -> None:
         if (item := self._build()) is None:
             return
-        if self._dialogs.confirm("Run now", f"Run '{item['name']}' now, without queueing it?"):
+        if self._dialogs.confirm("Run now", f"Run '{item['name']}' now, without scheduling it?"):
             self._commands.send(f"Run {item['name']}", lambda api: api.item_execute(item))
 
-    def on_reset_form(self) -> None:
-        if (spec := self._state.current) is not None:
-            self._state.remembered.pop(spec.name, None)
-            self._form.show_plan(spec, {p.name: p.initial_value() for p in spec.params})
+    def on_stop_run(self) -> None:
+        self._run_control.stop_run()
 
-    def on_save_edit(self) -> None:
-        editing = self._state.editing
-        if editing is None or (item := self._build()) is None:
+    def on_add_to_schedule(self) -> None:
+        if (item := self._build()) is None:
             return
-        item = {**editing, "args": item.get("args", []), "kwargs": item.get("kwargs", {})}
+        options = self._form.read_schedule_options()
+        count = max(options.iterations, 1)
+        label = f"{count} x {item['name']}" if count > 1 else item["name"]
+
+        def added(reply: JSON) -> None:
+            uids = [it.get("item_uid", "") for it in reply.get("items", [])]
+            self._bus.publish(
+                ItemAdded(tuple((uid, k, count) for k, uid in enumerate(uids, start=1)))
+            )
+
         self._commands.send(
-            f"Update {item['name']}",
-            lambda api: api.item_update(item),
-            on_success=lambda _: self._finish_edit(),
+            f"Add {label} to schedule",
+            lambda api: api.item_add_batch([item] * count, pos=options.server_pos()),
+            on_success=added,
         )
 
-    def on_cancel_edit(self) -> None:
-        self._finish_edit()
+    # --- Events -----------------------------------------------------------------
+
+    def _on_catalog(self) -> None:
+        current = self._state.current
+        if current is not None and current.name in self._catalog.plans:
+            self._remember_current()
+            self._show_plan(current.name)
+        else:
+            self._state.current = None
+            self._form.clear("Select a plan from the list.")
+        self._show_list()
+
+    def _on_cleared(self, reason: str) -> None:
+        self._state.current = None
+        self._list.show_plans([], None)
+        self._form.clear(reason)
 
     # --- Internals --------------------------------------------------------------
 
-    def _on_permissions(self, event: PermissionsKnown) -> None:
-        allowed = event.allowed
-        self._can_read_plans = allowed.read_resources
-        self._form.enable_submit(add=allowed.edit_queue, run_now=allowed.execute)
-        if not allowed.read_resources:
-            self._state.plans = {}
-            self._show_list()
-            self._form.clear(
-                "This connection may not list plans (it has no API key). "
-                "Connect with the beamline API key to build and queue plans."
-            )
-
-    def _load_allowed(self) -> None:
-        if not self._can_read_plans:
-            return
-        def fetch(api) -> tuple[JSON, JSON]:
-            return api.plans_allowed(reload=True), api.devices_allowed(reload=True)
-
-        self._commands.send("Load plans", fetch, self._on_allowed, announce=False)
-
-    def _on_allowed(self, replies: tuple[JSON, JSON]) -> None:
-        plans_reply, devices_reply = replies
-        state = self._state
-        state.plans = dict(plans_reply.get("plans_allowed", {}))
-        state.catalog = Catalog.from_allowed(
-            devices_reply.get("devices_allowed", {}), plans=state.plans
-        )
-        self._publish(Notice(f"Loaded {len(state.plans)} plans"))
-        current = state.current.name if state.current else None
-        self._show_list()
-        if current in state.plans:
-            self._show_plan(current)
-        if state.pending_edit is not None:
-            self._start_edit(state.pending_edit)
-
     def _show_list(self) -> None:
-        text = self._state.filter_text
-        names = sorted(n for n in self._state.plans if text in n.lower())
         current = self._state.current.name if self._state.current else None
-        self._list.show_plans(names, current)
+        self._list.show_plans(group_plans(self._catalog.plans, self._state.filter_text), current)
 
-    def _show_plan(self, name: str, values: dict[str, FormValue] | None = None) -> None:
-        if name not in self._state.plans:
+    def _show_plan(self, name: str) -> None:
+        spec = self._catalog.spec(name)
+        if spec is None:
             return
-        spec = describe_plan(self._state.plans[name], self._state.catalog)
         self._state.current = spec
-        if values is None:
-            defaults = {p.name: p.initial_value() for p in spec.params}
-            values = defaults | self._state.remembered.get(name, {})
-        self._form.show_plan(spec, values)
+        defaults = {p.name: p.initial_value() for p in spec.params}
+        remembered = {
+            k: v for k, v in self._state.remembered.get(name, {}).items() if k in defaults
+        }
+        self._form.show_plan(spec, defaults | remembered)
 
     def _remember_current(self) -> None:
         if (spec := self._state.current) is not None:
@@ -236,34 +202,3 @@ class PlansController:
             return None
         self._form.show_errors({})
         return item
-
-    def _start_edit(self, item: JSON) -> None:
-        state = self._state
-        if not state.plans:
-            state.pending_edit = item
-            return
-        state.pending_edit = None
-        name = item.get("name", "")
-        if name not in state.plans:
-            self._dialogs.error("Edit", f"'{name}' is not an allowed plan on this server.")
-            return
-        self._remember_current()
-        state.editing = item
-        spec = describe_plan(state.plans[name], state.catalog)
-        self._show_plan(name, form_values(spec, item))
-        self._list.show_plans(sorted(n for n in state.plans if state.filter_text in n.lower()),
-                              name)
-        self._form.set_edit_mode(name)
-
-    def _finish_edit(self) -> None:
-        self._state.editing = None
-        self._form.set_edit_mode(None)
-        if (spec := self._state.current) is not None:
-            self._show_plan(spec.name)
-
-    def _reset(self) -> None:
-        self._state = _State(remembered=self._state.remembered)
-        self._can_read_plans = True
-        self._list.show_plans([], None)
-        self._form.clear("Connect to a server to see its plans.")
-        self._form.enable_submit(add=True, run_now=True)

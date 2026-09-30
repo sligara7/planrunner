@@ -5,24 +5,34 @@ file is also the map of how the application fits together.
 """
 
 import signal
-from dataclasses import dataclass
+import sys
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
 
 from planrunner.client import ApiFactory, ServerClient, make_http_api
 from planrunner.config import JsonConfigStore
+from planrunner.controllers.catalog import CatalogStore
 from planrunner.controllers.commands import Commands
 from planrunner.controllers.connection import ConnectionController, ConnectionForm
 from planrunner.controllers.console import ConsoleController
 from planrunner.controllers.plans import PlansController
 from planrunner.controllers.queue import QueueController
+from planrunner.controllers.run_control import RunControl
+from planrunner.controllers.source import SourceController
 from planrunner.controllers.status import StatusController
 from planrunner.credentials import KeyFinder, default_key_finder
 from planrunner.dispatch import QueueDispatcher
 from planrunner.events import EventBus
 from planrunner.feeds import ConsoleFeed, PollingStatusFeed
 from planrunner.protocols import Feed
+from planrunner.sources import SourceFinder
 from planrunner.ui.main_window import MainWindow
-from planrunner.ui.services import TkDialogs, TkPump
+from planrunner.ui.services import QtDialogs, QtPump
+from planrunner.ui.style import apply_style
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -32,6 +42,8 @@ class AppOptions:
     api_key: str | None = None
     connect: bool = False
     """Connect as soon as the window opens."""
+    source_roots: Sequence[Path] = field(default_factory=tuple)
+    """Local checkouts (profile collection, hextools) the plan source viewer reads."""
     config_path: Path | None = None
     status_period: float = 1.0
 
@@ -43,55 +55,69 @@ class App:
         api_factory: ApiFactory = make_http_api,
         keys: KeyFinder | None = None,
     ) -> None:
+        self.qt = QApplication.instance() or QApplication(sys.argv[:1])
+        apply_style(self.qt)  # type: ignore[arg-type]
+
         dispatcher = QueueDispatcher()
         bus = EventBus(dispatcher)
         config = JsonConfigStore(options.config_path)
         self.client = ServerClient(dispatcher, api_factory)
         self.feeds: list[Feed] = [PollingStatusFeed(bus, options.status_period), ConsoleFeed(bus)]
         commands = Commands(self.client, bus)
+        catalog = CatalogStore(commands=commands, bus=bus)
+        run_control = RunControl(commands=commands, bus=bus)
 
         self.window = window = MainWindow()
-        dialogs = TkDialogs(window.root)
-        self.pump = TkPump(window.root, dispatcher)
+        dialogs = QtDialogs(window.window)
+        self.pump = QtPump(dispatcher)
 
         # Console first, so notices published while the others start are shown.
         self.console = ConsoleController(
             view=window.console, status_line=window.status_bar, bus=bus, dialogs=dialogs,
             config=config,
         )
-        self.status = StatusController(view=window.status_strip, bus=bus)
+        self.status = StatusController(view=window.environment_bar, bus=bus)
         self.connection = ConnectionController(
-            view=window.connection_bar, connector=self.client, commands=commands,
+            view=window.top_bars, connector=self.client, commands=commands,
             feeds=self.feeds, bus=bus, dialogs=dialogs, config=config,
             keys=keys or default_key_finder(),
         )
         self.plans = PlansController(
-            plan_list=window.plan_list, form=window.plan_form, commands=commands, bus=bus,
-            publisher=bus, dialogs=dialogs,
+            plan_list=window.plan_list, form=window.plan_form, catalog=catalog,
+            commands=commands, run_control=run_control, bus=bus, dialogs=dialogs,
         )
         self.queue = QueueController(
-            view=window.scheduler, commands=commands, bus=bus, publisher=bus, dialogs=dialogs,
+            view=window.scheduler, catalog=catalog, commands=commands,
+            run_control=run_control, bus=bus, dialogs=dialogs,
+        )
+        self.source = SourceController(
+            view=window.source_viewer, finder=SourceFinder(options.source_roots),
+            catalog=catalog, bus=bus, dialogs=dialogs,
         )
 
         if options.server_uri or options.api_key:
-            current = window.connection_bar.read_form()
-            window.connection_bar.fill_form(ConnectionForm(
+            current = window.server_bar.read_form()
+            window.server_bar.fill_form(ConnectionForm(
                 uri=options.server_uri or current.uri, api_key=options.api_key or current.api_key,
             ))
         self._connect_on_start = options.connect
-        window.on_close(self.close)
-
-    def run(self) -> None:
-        signal.signal(signal.SIGINT, lambda *_: self.close())
+        window.on_close(self.shutdown)
         self.pump.start()
-        if self._connect_on_start:
-            self.window.root.after_idle(self.connection.on_connect)
-        self.window.root.mainloop()
 
-    def close(self) -> None:
-        """Leave the server untouched: stop listening, close the connection, exit."""
+    def run(self) -> int:
+        # Let Ctrl-C in the terminal close the window (Qt otherwise swallows it).
+        signal.signal(signal.SIGINT, lambda *_: self.window.window.close())
+        keepalive = QTimer()
+        keepalive.start(250)
+        keepalive.timeout.connect(lambda: None)
+        self.window.show()
+        if self._connect_on_start:
+            QTimer.singleShot(0, self.connection.on_connect)
+        return self.qt.exec()
+
+    def shutdown(self) -> None:
+        """Leave the server untouched: stop listening, close the connection."""
         for feed in self.feeds:
             feed.stop()
         self.client.shutdown()
         self.pump.stop()
-        self.window.root.destroy()
