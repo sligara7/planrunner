@@ -31,6 +31,9 @@ PLANS = {
         "name": "tomo_flyscan", "module": "__main__",
         "parameters": [kw("exposure_time", annotation={"type": "float"})],
     },
+    "label_sample": {
+        "name": "label_sample", "module": "__main__", "parameters": [kw("sample_name")],
+    },
     "sleep_for_secs": {
         "name": "sleep_for_secs", "module": "__main__",
         "parameters": [kw("secs", annotation={"type": "float"})],
@@ -89,7 +92,8 @@ def always_yes(app):
 
 def test_plans_grouped_beamline_first_and_form_follows_selection(app):
     connect(app)
-    assert app.window.plan_list.names() == ["sleep_for_secs", "tomo_flyscan", "count"]
+    assert app.window.plan_list.names() == [
+        "label_sample", "sleep_for_secs", "tomo_flyscan", "count"]
     app.plans.on_plan_selected("count")
     assert app.window.plan_form.current_plan() == "count"
     assert set(app.window.plan_form.read_values()) == {"detectors", "num"}
@@ -185,3 +189,15 @@ def test_closing_the_gui_sends_nothing_to_the_server(app):
               "item_add_batch", "item_remove", "item_update", "environment_close"}
     app.shutdown()
     assert not writes & {name for name, _, _ in app.server.calls}
+
+
+def test_text_that_names_a_device_asks_first_and_declining_sends_nothing(app):
+    connect(app)
+    asked = []
+    app.plans._dialogs.confirm = lambda title, message: asked.append(message) or False
+    app.plans.on_plan_selected("label_sample")
+    app.window.plan_form.grid.field("sample_name").set("motor")
+    app.plans.on_add_to_schedule()
+    QApplication.processEvents()
+    assert asked and "'motor'" in asked[0]
+    assert not app.server.called("item_add_batch")

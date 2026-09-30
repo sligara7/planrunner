@@ -54,6 +54,9 @@ class ParamSpec:
     description: str = ""
     default: Any = _NO_DEFAULT
     allows_none: bool = False
+    converts_names: bool = False
+    """The server's worker replaces any string in this value that names a device or plan
+    with the object itself (true for untyped parameters)."""
     choices: tuple[str, ...] = ()
     choices_are_suggestions: bool = False
     """True when the user may also type a value that is not in ``choices``."""
@@ -169,6 +172,7 @@ def _describe_param(param: JSON, catalog: Catalog) -> ParamSpec:
         "allows_none": shape.allows_none or default is None,
         "minimum": _read_number(param.get("min")),
         "maximum": _read_number(param.get("max")),
+        "converts_names": shape is UNKNOWN,
     }
 
     if kind in (ParamKind.VAR_POSITIONAL, ParamKind.VAR_KEYWORD):
@@ -484,3 +488,42 @@ def _bind(plan: PlanSpec, args: list[Any], kwargs: dict[str, Any]) -> dict[str, 
             bound[spec.name] = extra_kwargs
     return bound
 
+
+
+# ------------------------------------------------------------------------------
+#                       Text that the server will turn into a device
+# ------------------------------------------------------------------------------
+
+
+def name_conversion_warnings(plan: PlanSpec, item: JSON, catalog: Catalog) -> dict[str, str]:
+    """Parameters whose text values the server will silently replace with a device or plan.
+
+    For an untyped parameter the queueserver's worker converts every string, at any
+    depth, that matches an allowed device or plan name (or a dotted path under one).
+    Device pickers are exempt: there a device is what was meant.
+    """
+    names = set(catalog.devices) | set(catalog.plans)
+    bound = _bind(plan, list(item.get("args", ())), dict(item.get("kwargs", {})))
+    warnings: dict[str, str] = {}
+    for spec in plan.params:
+        if not spec.converts_names or spec.choices or spec.name not in bound:
+            continue
+        if matches := sorted(set(_named_strings(bound[spec.name], names))):
+            listed = ", ".join(f"'{m}'" for m in matches)
+            what = "is a device or plan name" if len(matches) == 1 else "are device or plan names"
+            warnings[spec.name] = (
+                f"{listed} {what}: the server will pass the device or plan itself, not the text"
+            )
+    return warnings
+
+
+def _named_strings(value: Any, names: set[str]) -> list[str]:
+    match value:
+        case str() if value in names or value.split(".")[0] in names:
+            return [value]
+        case list() | tuple():
+            return [s for v in value for s in _named_strings(v, names)]
+        case dict():
+            return [s for v in value.values() for s in _named_strings(v, names)]
+        case _:
+            return []

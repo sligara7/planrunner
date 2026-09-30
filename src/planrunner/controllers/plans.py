@@ -19,7 +19,13 @@ from planrunner.events import (
     SourceRequested,
 )
 from planrunner.plan_groups import PlanGroup, group_plans
-from planrunner.plan_params import FormValue, PlanInputError, PlanSpec, build_item
+from planrunner.plan_params import (
+    FormValue,
+    PlanInputError,
+    PlanSpec,
+    build_item,
+    name_conversion_warnings,
+)
 from planrunner.protocols import JSON, Dialogs, EventBusLike
 
 
@@ -201,4 +207,21 @@ class PlansController:
             self._form.show_errors(ex.errors)
             return None
         self._form.show_errors({})
+        if not confirm_name_conversions(self._dialogs, spec, item, self._catalog):
+            return None
         return item
+
+
+def confirm_name_conversions(dialogs: Dialogs, spec: PlanSpec, item: JSON,
+                             catalog: CatalogStore) -> bool:
+    """Ask before sending text the server would turn into a device; True to go ahead."""
+    warnings = name_conversion_warnings(spec, item, catalog.catalog)
+    if not warnings:
+        return True
+    lines = "\n".join(f"  {name}: {message}" for name, message in warnings.items())
+    return dialogs.confirm(
+        "Text that names a device",
+        f"These values match device or plan names on the server:\n\n{lines}\n\n"
+        "Because these parameters have no declared type, the server will replace the "
+        "text with the device or plan object. Send anyway?",
+    )

@@ -12,6 +12,7 @@ from typing import Protocol
 
 from planrunner.controllers.catalog import CatalogStore
 from planrunner.controllers.commands import Commands
+from planrunner.controllers.plans import confirm_name_conversions
 from planrunner.controllers.run_control import RunControl
 from planrunner.events import (
     Disconnected,
@@ -222,6 +223,8 @@ class QueueController:
             built = build_item(spec, self._view.read_task_values())
         except PlanInputError as ex:
             self._view.show_task_errors(ex.errors)
+            return
+        if not confirm_name_conversions(self._dialogs, spec, built, self._catalog):
             return
         updated = {**item, "args": built.get("args", []), "kwargs": built.get("kwargs", {})}
         self._commands.send(f"Save {item_title(item)}", lambda api: api.item_update(updated),

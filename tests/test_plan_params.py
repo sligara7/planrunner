@@ -7,6 +7,7 @@ from planrunner.plan_params import (
     build_item,
     describe_plan,
     form_values,
+    name_conversion_warnings,
 )
 
 DEVICES = {
@@ -188,3 +189,26 @@ def test_positional_only_parameters_go_to_args():
     }
     spec = describe_plan(plan, CATALOG)
     assert build_item(spec, {"a": "1", "rest": "[2, 3]"})["args"] == [1, 2, 3]
+
+
+def test_text_that_names_a_device_is_flagged_for_untyped_parameters():
+    plan = {"name": "p", "parameters": [
+        kw("sample_name"), kw("note", annotation={"type": "str"}), kw("options"),
+        kw("detector", default="None")]}
+    spec = describe_plan(plan, CATALOG)
+    item = build_item(spec, {
+        "sample_name": "motor",                        # untyped: would become the motor
+        "note": "motor",                               # typed str: left as text
+        "options": "{'target': 'det1.stats', 'n': 3}",  # nested dotted path
+        "detector": "det1",                            # a device picker: intended
+    })
+    warnings = name_conversion_warnings(spec, item, CATALOG)
+    assert set(warnings) == {"sample_name", "options"}
+    assert "'motor'" in warnings["sample_name"]
+    assert "'det1.stats'" in warnings["options"]
+
+
+def test_plain_text_is_not_flagged():
+    spec = describe_plan({"name": "p", "parameters": [kw("sample_name")]}, CATALOG)
+    item = build_item(spec, {"sample_name": "my_sample_3"})
+    assert name_conversion_warnings(spec, item, CATALOG) == {}
