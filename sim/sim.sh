@@ -73,6 +73,23 @@ check_disk() {
     fi
 }
 
+start_armed_gate() {
+    # The simulated Kinetix free-runs the moment it is armed, unlike a real one on an
+    # external trigger, so an ophyd-async fly scan (which arms during prepare) fails its
+    # kickoff check ("Kickoff requested N:M, but detector was only prepared up to K").
+    # This bridge holds the camera until the PandA pulse train fires. On by default here
+    # (planrunner runs ophyd-async plans); HEX_SIM_ARMED_GATE=0 turns it off, e.g. for the
+    # pyepics oracle, which must run without it.
+    [ "${HEX_SIM_ARMED_GATE:-1}" = 0 ] && return
+    if ! pgrep -f "$repo/sim/hex/iocs/panda/armed_gate_bridge.py" >/dev/null; then
+        # shellcheck disable=SC1091
+        (source "$repo/sim/hex/scripts/env.sh" \
+            && nohup "$toolpy" -u "$repo/sim/hex/iocs/panda/armed_gate_bridge.py" \
+                > /tmp/hex-armed-gate-bridge.log 2>&1 &)
+        say "camera armed-gate bridge started (log /tmp/hex-armed-gate-bridge.log)"
+    fi
+}
+
 start_watchdog() {
     if ! pgrep -f "$watchdog_script" >/dev/null; then
         # shellcheck disable=SC1091
@@ -91,6 +108,7 @@ up() {
     "$repo/sim/hex/images/build.sh"
     HEX_PROFILE_MANIFEST="$PROFILE_DIR/pixi.toml" "$repo/sim/hex/scripts/up_all.sh"
     start_watchdog
+    start_armed_gate
     PROFILE_REPO="$PROFILE_DIR" SIM_ENV="$repo/sim/hex/scripts/env.sh" \
         "$repo/sim/queueserver/bsqs-local.sh" up hex
     cat <<EOF
@@ -112,6 +130,7 @@ host_processes=(
     "$repo/sim/hex/iocs/panda/ttl_trigger_bridge.py"
     "$repo/sim/hex/iocs/sim_ioc.py"
     "$repo/sim/hex/scripts/data_watchdog.py"
+    "$repo/sim/hex/iocs/panda/armed_gate_bridge.py"
 )
 
 down() {

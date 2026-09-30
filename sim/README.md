@@ -42,6 +42,14 @@ you get the read-only view an operator without the key would see.
 4. Starts Redis, RE Manager and bluesky-httpserver (`queueserver/bsqs-local.sh up hex`),
    with the API key `planrunnerdev`.
 
+**Fly scans.** The simulated Kinetix is a stock AreaDetector simulator: once armed it
+produces frames straight away, where a real Kinetix on an external trigger waits for
+pulses. `sim-up` therefore also starts `hex/iocs/panda/armed_gate_bridge.py`, which holds
+the camera until the PandA pulse train fires. Without it an ophyd-async fly scan such as
+`tomo_flyscan` fails at kickoff with "Kickoff requested N:M, but detector was only prepared
+up to K". Set `HEX_SIM_ARMED_GATE=0` to leave it off (the pyepics reference script must run
+without it).
+
 **Disk use.** The simulated cameras write real HDF5 files of zero-valued frames to
 `/tmp/hex-sim-data`. Recording on the simulated Phantom writes nothing; downloading a
 cine does, at about 130 MB/s, and a full cine is about 16 GB. A watchdog caps the
