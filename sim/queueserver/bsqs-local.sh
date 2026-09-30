@@ -39,6 +39,18 @@ QS=(pixi run --frozen --manifest-path "$PROFILE_REPO/pixi.toml" --environment qs
 
 say() { echo "[bsqs-local] $*"; }
 
+init_panda() {  # init_panda PROFILE: the PandA dataset names that profile's plans expect
+    local py="$repo_root/.pixi/envs/simtools/bin/python"
+    local script="$repo_root/sim/hex/iocs/panda/init_panda_ioc.py"
+    if [ -x "$py" ] && [ -f "$script" ]; then
+        "$py" "$script" --profile "$1" >/dev/null \
+            && say "PandA dataset names set for the $1 profile" \
+            || say "WARN: could not set the PandA dataset names ($script --profile $1)"
+    else
+        say "WARN: no simtools env; PandA dataset names not set for the $1 profile"
+    fi
+}
+
 render() {  # render TEMPLATE OUTPUT STARTUP_SOURCE PERMISSIONS
     sed -e "s|@RUN_DIR@|$RUN_DIR|g" -e "s|@SOCK_DIR@|$SOCK_DIR|g" -e "s|@REDIS_PORT@|$REDIS_PORT|g" \
         -e "s|@STARTUP_SOURCE@|$3|g" -e "s|@PERMISSIONS@|$4|g" "$1" > "$2"
@@ -72,6 +84,7 @@ up() {
             source "$SIM_ENV"
             export HEX_SIM=1 MPLBACKEND=Agg
             startup_dir="$PROFILE_REPO/startup"
+            init_panda hex
             ;;
         hextools)
             [ -f "$SIM_ENV" ] || { say "missing $SIM_ENV"; exit 1; }
@@ -79,6 +92,7 @@ up() {
             # shellcheck disable=SC1090
             source "$SIM_ENV"
             export HEXTOOLS_SIM=YES MPLBACKEND=Agg
+            init_panda hextools
             QS=(pixi run --frozen --manifest-path "$HEXTOOLS_REPO/pixi.toml" --environment qs)
             startup_source="startup_module: \"hextools.profiles.collection\""
             permissions="$here/hextools/user_group_permissions.yaml"

@@ -458,7 +458,7 @@ EPICS_CAS_SERVER_PORT=5075 python iocs/motor/motor_ioc.py &
 #    (--yaml <hex-ob>/hextools/src/hextools/panda_configurations/tomo_radio_1_config.yaml
 #     applies the same design from the shared declarative YAML — see §10)
 python iocs/panda/hex_tomo_design.py
-python iocs/panda/init_panda_ioc.py      # CALC2:OUT:DATASET=Angle
+python iocs/panda/init_panda_ioc.py      # CALC2:OUT:DATASET=Angle (--profile hextools: legacy_angle)
 python iocs/kinetix/init_kinetix.py      # cam ArrayCallbacks=1
 # 5. motor→INENC bridge (slew-limited; drains replies)
 EPICS_CA_ADDR_LIST=127.0.0.1:5075 python -u iocs/panda/motor_encoder_bridge.py &

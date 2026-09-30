@@ -27,7 +27,13 @@ HEX beamline must be up first (`hex-ob/hex-simulated-beamline/scripts/up_all.sh`
 sim's Redis, tiled and data directory, connects devices for real, and refuses to start if
 EPICS could reach anything but loopback. Its permissions file is
 `hextools/user_group_permissions.yaml` (the HEX profile's, unchanged). From the top:
-`SIM_PROFILE=hextools pixi run sim-up`.
+`SIM_PROFILE=hextools HEXTOOLS_REPO=<checkout> pixi run sim-up`.
+
+`up hex` and `up hextools` also set the PandA's dataset names each profile's plans expect
+(`sim/hex/iocs/panda/init_panda_ioc.py --profile`). hextools names CALC1's output "Angle",
+which the HEX design already gives CALC2, and the PandA's HDF writer refuses two datasets
+with one name. So for hextools CALC2 becomes `legacy_angle`, and `up hex` puts it back.
+Which side should change on the beamline is still open.
 
 Everything the services write goes to `.bsqs-local/` (gitignored), including the plan
 list the worker rewrites when the environment opens. Nothing in the profile repo is
