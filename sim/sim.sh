@@ -113,6 +113,7 @@ up() {
     HEX_PROFILE_MANIFEST="$PROFILE_DIR/pixi.toml" "$repo/sim/hex/scripts/up_all.sh"
     start_watchdog
     start_armed_gate
+    say "queueserver profile: ${SIM_PROFILE:-hex}${HEXTOOLS_REPO:+ (HEXTOOLS_REPO=$HEXTOOLS_REPO)}"
     PROFILE_REPO="$PROFILE_DIR" SIM_ENV="$repo/sim/hex/scripts/env.sh" \
         "$repo/sim/queueserver/bsqs-local.sh" up "${SIM_PROFILE:-hex}"
     cat <<EOF

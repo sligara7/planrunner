@@ -121,7 +121,12 @@ up() {
 down() {
     for name in httpserver manager redis; do
         if running "$name"; then
-            kill "$(cat "$RUN_DIR/$name.pid")" && say "$name stopped"
+            local pid
+            pid=$(cat "$RUN_DIR/$name.pid")
+            kill "$pid"
+            # Wait for it to exit, so an `up` straight after can bind the same ports.
+            for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+            say "$name stopped"
         fi
         rm -f "$RUN_DIR/$name.pid"
     done
