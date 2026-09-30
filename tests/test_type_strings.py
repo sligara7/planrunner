@@ -41,3 +41,16 @@ def test_annotated_is_unwrapped_and_keeps_its_metadata():
     shape = parse_type("typing.Annotated[float, 's']")
     assert shape.names == {"float"}
     assert shape.metadata == ("s",)
+
+
+def test_annotated_inside_a_union_is_unwrapped():
+    shape = parse_type("typing.Optional[typing.Annotated[float, 's']]")
+    assert shape.names == {"float"}
+    assert shape.allows_none
+    assert shape.metadata == ("s",)
+
+
+def test_sequence_of_a_protocol_is_a_list():
+    shape = parse_type("collections.abc.Sequence[__FLYABLE__]")
+    assert shape.is_list
+    assert shape.names == {"__FLYABLE__"}

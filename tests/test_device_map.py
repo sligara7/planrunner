@@ -56,3 +56,18 @@ def test_map_lists_fillable_devices_and_hidden_uses(tmp_path):
     report = render_markdown(maps, catalog, "http://sim")
     assert "2 of 2 parameters declare no type" in report
     assert "`kinetix1`: uses the profile's device directly" in report
+
+
+def test_a_look_up_with_a_declared_device_default_is_not_hidden(tmp_path):
+    (tmp_path / "fly.py").write_text(PLAN_SOURCE)
+    plans = {"tomo_flyscan": {"name": "tomo_flyscan", "module": "__main__", "parameters": [
+        {"name": "detectors", "kind": {"name": "POSITIONAL_OR_KEYWORD"}},
+        {"name": "panda", "kind": {"name": "POSITIONAL_OR_KEYWORD"},
+         "annotation": {"type": "__FLYABLE__ | None"}, "default": "'panda'",
+         "default_defined_in_decorator": True},
+    ]}}
+    devices = {"panda": {"is_flyable": True}, "kinetix1": {"is_readable": True}}
+    (plan,) = build_map(plans, Catalog.from_allowed(devices, plans=plans),
+                        SourceFinder([tmp_path]))
+    # panda: declared default, shown by the queueserver. photon_shutter: no parameter.
+    assert [d.device for d in plan.hidden] == ["kinetix1", "photon_shutter"]

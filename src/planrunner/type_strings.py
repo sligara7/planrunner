@@ -7,7 +7,7 @@ whether the value is a list and whether ``None`` is allowed.
 """
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 _LIST_NAMES = frozenset(
@@ -43,54 +43,65 @@ def parse_type(type_str: str | None) -> TypeShape:
     except SyntaxError:
         return UNKNOWN
 
-    metadata: tuple[Any, ...] = ()
-    if isinstance(tree, ast.Subscript) and _name_of(tree.value) == "Annotated":
-        first, *extra = _elements(tree.slice)
-        metadata = tuple(_literal(e) for e in extra)
-        tree = first
-
+    found = _Found()
+    tree = _unwrap_annotated(tree, found)
     is_list = False
     if isinstance(tree, ast.Subscript) and _name_of(tree.value) in _LIST_NAMES:
         is_list = True
         tree = tree.slice
 
-    names: set[str] = set()
-    literals: list[Any] = []
-    allows_none = _collect(tree, names, literals)
-    return TypeShape(names=frozenset(names), is_list=is_list, allows_none=allows_none,
-                     literals=tuple(literals), metadata=metadata)
+    allows_none = _collect(tree, found)
+    return TypeShape(names=frozenset(found.names), is_list=is_list, allows_none=allows_none,
+                     literals=tuple(found.literals), metadata=tuple(found.metadata))
 
 
-def _collect(node: ast.expr, names: set[str], literals: list[Any]) -> bool:
+@dataclass(slots=True)
+class _Found:
+    names: set[str] = field(default_factory=set)
+    literals: list[Any] = field(default_factory=list)
+    metadata: list[Any] = field(default_factory=list)
+
+
+def _unwrap_annotated(node: ast.expr, found: _Found) -> ast.expr:
+    """``Annotated[float, "s"]`` -> ``float``, keeping ``"s"`` as metadata."""
+    if isinstance(node, ast.Subscript) and _name_of(node.value) == "Annotated":
+        first, *extra = _elements(node.slice)
+        found.metadata.extend(_literal(e) for e in extra)
+        return first
+    return node
+
+
+def _collect(node: ast.expr, found: _Found) -> bool:
     """Add the type names (and Literal values) under ``node``; return True if None is allowed."""
+    node = _unwrap_annotated(node, found)  # also inside a union: Optional[Annotated[...]]
     match node:
         case ast.Constant(value=None):
             return True
         case ast.BinOp(op=ast.BitOr(), left=left, right=right):
-            return _collect(left, names, literals) | _collect(right, names, literals)
+            return _collect(left, found) | _collect(right, found)
         case ast.Subscript(value=base) if _name_of(base) == "Literal":
             values = [_literal(e) for e in _elements(node.slice)]
-            literals.extend(v for v in values if v is not None)
+            found.literals.extend(v for v in values if v is not None)
             return None in values
         case ast.Subscript(value=base) if _name_of(base) in _UNION_NAMES:
             allows_none = _name_of(base) == "Optional"
             for element in _elements(node.slice):
-                allows_none |= _collect(element, names, literals)
+                allows_none |= _collect(element, found)
             return allows_none
         case ast.Subscript(value=base):
             # A generic other than a union, e.g. dict[str, float]: keep the outer name only.
-            names.add(_name_of(base))
+            found.names.add(_name_of(base))
             return False
         case ast.Tuple(elts=elements):
             allows_none = False
             for element in elements:
-                allows_none |= _collect(element, names, literals)
+                allows_none |= _collect(element, found)
             return allows_none
         case _:
             name = _name_of(node)
             if name in _NONE_NAMES:
                 return True
-            names.add(name)
+            found.names.add(name)
             return False
 
 

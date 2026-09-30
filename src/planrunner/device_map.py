@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from planrunner.hidden_deps import HiddenDependency, hidden_dependencies
+from planrunner.hidden_deps import HiddenDependency, How, hidden_dependencies
 from planrunner.plan_groups import source_of
 from planrunner.plan_params import Catalog, FieldKind, ParamKind, describe_plan
 from planrunner.protocols import JSON
@@ -73,7 +73,14 @@ def build_map(plans: Mapping[str, JSON], catalog: Catalog,
         hidden: tuple[HiddenDependency, ...] = ()
         where = ""
         if finder is not None and (found := finder.find(name, plan.get("module"))):
-            hidden = tuple(hidden_dependencies(found.text, catalog.devices))
+            # A look-up "when not passed" is not hidden when the parameter declares a
+            # device default: the queueserver shows that default and passes it itself.
+            defaulted = {p.name for p in spec.params
+                         if isinstance(p.default, str) and p.default in catalog.devices}
+            hidden = tuple(
+                d for d in hidden_dependencies(found.text, catalog.devices)
+                if not (d.how is How.LOOKUP_IF_NOT_PASSED and d.device in defaulted)
+            )
             where = f"{found.path}:{found.first_line}"
         maps.append(PlanMap(name, source_of(plan), tuple(rows), hidden, where))
     return maps
