@@ -50,7 +50,7 @@ def spec():
 def test_fields_match_types(spec):
     kinds = {p.name: p.field_kind for p in spec.params}
     assert kinds == {
-        "detectors": FieldKind.EXPRESSION,
+        "detectors": FieldKind.MULTI_CHOICE,
         "num_images": FieldKind.INTEGER,
         "exposure_time": FieldKind.FLOAT,
         "acquire_period": FieldKind.FLOAT,
@@ -70,11 +70,31 @@ def test_choices_come_from_device_flags_and_enums(spec):
     assert spec.param("mode").choices == ("fast", "slow")
 
 
-def test_unannotated_parameter_suggests_devices(spec):
+def test_untyped_detectors_parameter_offers_only_detectors(spec):
     detectors = spec.param("detectors")
     assert detectors.required
-    assert detectors.choices == ("det1", "det2", "motor")
-    assert detectors.choices_are_suggestions
+    assert detectors.field_kind is FieldKind.MULTI_CHOICE
+    assert detectors.type_label == "list[detector]?"
+    assert detectors.choices == ("det1", "det2")  # not the motor
+
+
+def test_untyped_parameters_are_guessed_not_offered_devices():
+    """count_germ(count_time, num=1, detector=None, md=None): AJ's screenshot."""
+    catalog = Catalog.from_allowed(
+        {**DEVICES, "ph_close_cmd": {"is_readable": True, "is_movable": True}}, plans=[])
+    plan = {"name": "count_germ", "parameters": [
+        kw("count_time"), kw("num", default="1"), kw("detector", default="None"),
+        kw("md", default="None"), kw("rot_motor", default="None"), kw("mystery")]}
+    params = {p.name: p for p in describe_plan(plan, catalog).params}
+    assert (params["count_time"].field_kind, params["count_time"].type_label) == (
+        FieldKind.FLOAT, "float?")
+    assert params["count_time"].choices == ()
+    assert (params["num"].field_kind, params["num"].type_label) == (FieldKind.INTEGER, "int?")
+    assert params["detector"].field_kind is FieldKind.CHOICE
+    assert params["detector"].choices == ("det1", "det2")  # no motor, no command PV
+    assert params["md"].type_label == "dict?"
+    assert params["rot_motor"].choices == ("motor", "ph_close_cmd")
+    assert (params["mystery"].field_kind, params["mystery"].choices) == (FieldKind.EXPRESSION, ())
 
 
 def test_initial_values_show_defaults(spec):
@@ -105,9 +125,9 @@ def test_build_item_omits_defaults_and_empty_fields(spec):
     }
 
 
-def test_bare_device_name_is_passed_as_string(spec):
-    item = build_item(spec, {"detectors": "det1", "num_images": "1", "exposure_time": "1"})
-    assert item["kwargs"]["detectors"] == "det1"
+def test_bare_device_name_is_passed_as_string():
+    spec = describe_plan({"name": "p", "parameters": [kw("thing")]}, CATALOG)
+    assert build_item(spec, {"thing": "det1"})["kwargs"]["thing"] == "det1"
 
 
 def test_build_item_reports_every_bad_field(spec):
@@ -145,7 +165,7 @@ def test_form_values_round_trip(spec):
         "item_uid": "abc",
     }
     values = form_values(spec, item)
-    assert values["detectors"] == "['det1']"
+    assert values["detectors"] == ["det1"]
     assert values["num_images"] == "5"
     assert values["exposure_time"] == "0.1"
     assert values["readers"] == ["det2"]

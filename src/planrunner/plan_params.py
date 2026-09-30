@@ -20,25 +20,12 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Self
 
+from planrunner.field_kinds import FieldKind
 from planrunner.protocols import JSON
+from planrunner.type_guess import DeviceFilter, guess
 from planrunner.type_strings import UNKNOWN, TypeShape, parse_type
 
 type FormValue = str | bool | list[str]
-
-
-class FieldKind(StrEnum):
-    """Which widget to draw for a parameter."""
-
-    INTEGER = "int"
-    FLOAT = "float"
-    BOOLEAN = "bool"
-    STRING = "str"
-    CHOICE = "choice"
-    """Pick one name (a device, plan or enum value)."""
-    MULTI_CHOICE = "multi"
-    """Pick several names."""
-    EXPRESSION = "expression"
-    """A Python literal (number, list, dict, ...) or a bare device/plan name."""
 
 
 class ParamKind(StrEnum):
@@ -107,6 +94,8 @@ class Catalog:
     """What the server allows, as names grouped the way parameter types need them."""
 
     devices: tuple[str, ...] = ()
+    detectors: tuple[str, ...] = ()
+    """Readable and not movable: what a 'detector' parameter should offer."""
     readable: tuple[str, ...] = ()
     movable: tuple[str, ...] = ()
     flyable: tuple[str, ...] = ()
@@ -119,6 +108,8 @@ class Catalog:
 
         return cls(
             devices=names(),
+            detectors=tuple(sorted(n for n, d in devices.items()
+                                   if d.get("is_readable") and not d.get("is_movable"))),
             readable=names("is_readable"),
             movable=names("is_movable"),
             flyable=names("is_flyable"),
@@ -200,17 +191,29 @@ def _describe_param(param: JSON, catalog: Catalog) -> ParamSpec:
     if not shape.is_list and (simple := _simple_field(shape)) is not None:
         return ParamSpec(field_kind=simple, type_label=_label(shape), **common)
 
-    if shape is UNKNOWN and isinstance(default, bool):
-        return ParamSpec(field_kind=FieldKind.BOOLEAN, type_label="bool", **common)
+    if shape is UNKNOWN:
+        return _guessed_param(param["name"], default, catalog, common)
 
-    # Free text. With no annotation this is often a device (hextools annotates devices
-    # with concrete classes, which the queueserver drops), so suggest device names.
-    suggestions = catalog.devices if shape is UNKNOWN else ()
+    return ParamSpec(field_kind=FieldKind.EXPRESSION, type_label=_label(shape), **common)
+
+
+def _guessed_param(name: str, default: Any, catalog: Catalog, common: dict[str, Any]) -> ParamSpec:
+    """An untyped parameter: see ``planrunner.type_guess``."""
+    g = guess(name, default, has_default=default is not _NO_DEFAULT)
+    if g.devices is None:
+        return ParamSpec(field_kind=g.field_kind, type_label=g.label, **common)
+    choices = {
+        DeviceFilter.DETECTOR: catalog.detectors,
+        DeviceFilter.READABLE: catalog.readable,
+        DeviceFilter.MOVABLE: catalog.movable,
+        DeviceFilter.ANY: catalog.devices,
+    }[g.devices]
     return ParamSpec(
-        field_kind=FieldKind.EXPRESSION,
-        type_label=_label(shape) if shape.known else "any",
-        choices=suggestions,
-        choices_are_suggestions=bool(suggestions),
+        field_kind=g.field_kind,
+        type_label=g.label,
+        choices=choices,
+        # A guess may be wrong: a single device may also be typed in.
+        choices_are_suggestions=g.field_kind is FieldKind.CHOICE,
         **common,
     )
 
