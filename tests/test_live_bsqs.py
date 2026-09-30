@@ -141,3 +141,35 @@ def test_schedule_run_pause_stop_with_api_key(app):
     assert history(app)[-1]["result"]["exit_status"] == "stopped"
 
     assert app.dialogs.errors == []
+
+
+CAPTURE_CAMERA = os.environ.get("PLANRUNNER_LIVE_CAPTURE_CAMERA")
+
+
+@pytest.mark.skipif(not CAPTURE_CAMERA,
+                    reason="set PLANRUNNER_LIVE_CAPTURE_CAMERA (hextools profile on the sim)")
+def test_trigger_button_releases_a_waiting_capture(app):
+    """hextools' phantom_capture waits for the operator's event trigger; the button sends it."""
+    from bluesky_queueserver_api import BPlan  # noqa: PLC0415
+    from bluesky_queueserver_api.http import REManagerAPI  # noqa: PLC0415
+
+    connect(app, KEY)
+    settle(lambda: "phantom_capture" in app.plans._catalog.plans, what="plans")
+    api = REManagerAPI(http_server_uri=URI)
+    api.set_authorization_key(api_key=KEY)
+    try:
+        api.item_execute(BPlan("phantom_capture", camera=CAPTURE_CAMERA, num_images=3,
+                               exposure_time=0.01))
+        button = app.window.scheduler._trigger
+        settle(button.isEnabled, timeout=60, what="the Trigger button")
+        assert button.text() == f"Trigger {CAPTURE_CAMERA}"
+        time.sleep(2)
+        assert status(app).get("manager_state") == "executing_queue"  # still waiting
+        button.click()
+        settle(lambda: status(app).get("manager_state") == "idle", timeout=60,
+               what="the capture to finish")
+        last = api.history_get()["items"][-1]
+        assert (last["name"], last["result"]["exit_status"]) == ("phantom_capture", "completed")
+        assert not button.isEnabled()
+    finally:
+        api.close()

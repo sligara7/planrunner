@@ -24,6 +24,7 @@ from planrunner.controllers.queue import QueueController
 from planrunner.controllers.run_control import RunControl
 from planrunner.controllers.source import SourceController
 from planrunner.controllers.status import StatusController
+from planrunner.controllers.trigger import TriggerController
 from planrunner.credentials import KeyFinder, default_key_finder
 from planrunner.dispatch import QueueDispatcher
 from planrunner.events import EventBus
@@ -92,6 +93,9 @@ class App:
         self.queue = QueueController(
             view=window.scheduler, catalog=catalog, commands=commands,
             run_control=run_control, bus=bus, dialogs=dialogs,
+        )
+        self.trigger = TriggerController(
+            view=window.scheduler, catalog=catalog, commands=commands, bus=bus,
         )
         self.source = SourceController(
             view=window.source_viewer, finder=finder,

@@ -41,6 +41,9 @@ class FakeQueueServer:
     calls: list[tuple[str, tuple, dict]] = field(default_factory=list)
     monitor: FakeConsoleMonitor = field(default_factory=FakeConsoleMonitor)
     closed: bool = False
+    task_reply: JSON = field(default_factory=lambda: {
+        "success": True, "msg": "", "return_value": "done"})
+    """The ``result`` of every function_execute task."""
     _uids: int = 0
 
     @property
@@ -156,6 +159,18 @@ class FakeQueueServer:
     def environment_close(self) -> JSON:
         self._record("environment_close")
         return {"success": True}
+
+    def function_execute(self, item: JSON, *, run_in_background: bool = False) -> JSON:
+        self._record("function_execute", item, run_in_background=run_in_background)
+        return {"success": True, "task_uid": "task-1"}
+
+    def wait_for_completed_task(self, task_uid: str, *, timeout: float = 60) -> Any:
+        self._record("wait_for_completed_task", task_uid)
+        return {task_uid: "completed"}
+
+    def task_result(self, task_uid: str) -> JSON:
+        self._record("task_result", task_uid)
+        return {"success": True, "result": {"task_uid": task_uid, **self.task_reply}}
 
     def close(self) -> None:
         self.closed = True

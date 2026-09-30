@@ -88,6 +88,16 @@ class QueueServerAPI(Protocol):
 
     def environment_close(self) -> JSON: ...
 
+    def function_execute(self, item: JSON, *, run_in_background: bool = False) -> JSON:
+        """Run an allowed function in the worker; returns ``task_uid`` to follow it."""
+        ...
+
+    def wait_for_completed_task(self, task_uid: str, *, timeout: float = 60) -> Any: ...
+
+    def task_result(self, task_uid: str) -> JSON:
+        """``{"result": {"success", "msg", "return_value", ...}}`` once completed."""
+        ...
+
     def close(self) -> None: ...
 
 

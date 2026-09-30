@@ -1,7 +1,7 @@
 """The scheduler: ScriptRunner's scheduler panel.
 
-One control row ("Iteration | Run queue | Pause | Resume | Stop | Clear | Sleep(s) |
-Position | Add sleep"), with the queueserver-only controls in a "More" menu; the
+One control row ("Iteration | Run queue | Pause | Resume | Stop | Trigger | Clear |
+Sleep(s) | Position | Add sleep"), with the queueserver-only controls in a "More" menu; the
 "ID | Iter | Name/Details | Status" table; and "Task Details" with Edit / Save / Delete.
 """
 
@@ -64,6 +64,13 @@ class SchedulerPanel:
         self._pause = QPushButton("Pause")
         self._resume = QPushButton("Resume")
         self._stop = QPushButton("Stop")
+        self._trigger = QPushButton("Trigger")
+        self._trigger.setEnabled(False)
+        self._trigger.setToolTip("Send the event trigger to a camera the running plan "
+                                 "is waiting on")
+        self._trigger_targets: tuple[str, ...] = ()
+        self._on_trigger: Callable[[str], None] | None = None
+        self._trigger.clicked.connect(self._trigger_clicked)
         self._clear = QPushButton("Clear")
         self._more = QToolButton()
         self._more.setText("More ▾")
@@ -90,7 +97,8 @@ class SchedulerPanel:
 
         row.addWidget(QLabel("Iteration:"))
         row.addWidget(self._iterations)
-        for button in (self._run_queue, self._pause, self._resume, self._stop, self._clear):
+        for button in (self._run_queue, self._pause, self._resume, self._stop,
+                       self._trigger, self._clear):
             row.addWidget(button)
         row.addWidget(self._more)
         divider = QFrame()
@@ -230,6 +238,28 @@ class SchedulerPanel:
         self._actions["abort"].setEnabled(controls.abort)
         self._actions["halt"].setEnabled(controls.halt)
         self._actions["loop"].setEnabled(controls.set_loop)
+
+    # --- Event trigger (TriggerView) -------------------------------------------
+
+    def set_trigger_handler(self, handler: Callable[[str], None]) -> None:
+        self._on_trigger = handler
+
+    def show_trigger_targets(self, cameras: tuple[str, ...]) -> None:
+        self._trigger_targets = cameras
+        self._trigger.setEnabled(bool(cameras))
+        self._trigger.setText(f"Trigger {cameras[0]}" if len(cameras) == 1 else "Trigger")
+
+    def _trigger_clicked(self) -> None:
+        handler = self._on_trigger
+        if handler is None or not self._trigger_targets:
+            return
+        if len(self._trigger_targets) == 1:
+            handler(self._trigger_targets[0])
+            return
+        menu = QMenu(self._trigger)
+        for camera in self._trigger_targets:
+            menu.addAction(camera, lambda c=camera: handler(c))
+        menu.exec(self._trigger.mapToGlobal(QPoint(0, self._trigger.height())))
 
     def show_loop(self, loop: bool) -> None:
         self._actions["loop"].setChecked(loop)
