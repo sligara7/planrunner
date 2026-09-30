@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Self
 
+from planrunner.arg_rows import Column, parse_rows, pattern_for
 from planrunner.device_tree import DeviceNode, components, parse_devices
 from planrunner.field_kinds import FieldKind
 from planrunner.protocols import JSON
@@ -69,6 +70,8 @@ class ParamSpec:
     """For a device picker: 'movable', 'readable', 'detector', 'flyable' or 'any'."""
     component_choices: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     """For a single-device picker: each device's components that may be chosen instead."""
+    row_columns: tuple[Column, ...] = ()
+    """For ``DEVICE_ROWS``: the repeating pattern of each row."""
 
     @property
     def has_default(self) -> bool:
@@ -165,11 +168,13 @@ def describe_plan(plan: JSON, catalog: Catalog) -> PlanSpec:
     return PlanSpec(
         name=plan["name"],
         description=plan.get("description", ""),
-        params=tuple(_describe_param(p, catalog) for p in plan.get("parameters", ())),
+        params=tuple(
+            _describe_param(p, catalog, plan["name"]) for p in plan.get("parameters", ())
+        ),
     )
 
 
-def _describe_param(param: JSON, catalog: Catalog) -> ParamSpec:
+def _describe_param(param: JSON, catalog: Catalog, plan_name: str = "") -> ParamSpec:
     kind = ParamKind(param.get("kind", {}).get("name", ParamKind.POSITIONAL_OR_KEYWORD))
     annotation = param.get("annotation") or {}
     shape = parse_type(annotation.get("type"))
@@ -184,6 +189,18 @@ def _describe_param(param: JSON, catalog: Catalog) -> ParamSpec:
         "maximum": _read_number(param.get("max")),
         "converts_names": shape is UNKNOWN,
     }
+
+    if kind is ParamKind.VAR_POSITIONAL and (columns := pattern_for(plan_name, param["name"])):
+        return ParamSpec(
+            field_kind=FieldKind.DEVICE_ROWS,
+            type_label=", ".join(c.name for c in columns) + ", …",
+            choices=catalog.movable,
+            device_capability="movable",
+            component_choices=_component_choices(
+                FieldKind.CHOICE, "movable", catalog.movable, catalog),
+            row_columns=columns,
+            **common,
+        )
 
     if kind in (ParamKind.VAR_POSITIONAL, ParamKind.VAR_KEYWORD):
         label = "*args" if kind is ParamKind.VAR_POSITIONAL else "**kwargs"
@@ -351,11 +368,35 @@ def build_item(plan: PlanSpec, values: Mapping[str, FormValue]) -> JSON:
     Empty fields and fields left at their default are omitted, so the server's
     default applies and queued items stay short. Raises ``PlanInputError``.
     """
-    call = _Call()
+    parsed: dict[str, Any] = {}
     errors: dict[str, str] = {}
     for spec in plan.params:
         try:
-            call.add(spec, parse_form_value(spec, values.get(spec.name, "")))
+            parsed[spec.name] = parse_form_value(spec, values.get(spec.name, ""))
+        except ValueError as ex:
+            errors[spec.name] = str(ex)
+    if errors:
+        raise PlanInputError(errors)
+
+    # Filling *args forces every parameter before it to be passed positionally:
+    # scan(detectors, *args) called as scan(motor, 0, 1, detectors=...) would bind the
+    # motor to 'detectors'.
+    varargs = next((p for p in plan.params if p.kind is ParamKind.VAR_POSITIONAL), None)
+    positional_before = varargs is not None and bool(parsed.get(varargs.name)) and (
+        parsed.get(varargs.name) is not _OMIT)
+    call = _Call()
+    before_varargs = True
+    for spec in plan.params:
+        if spec is varargs:
+            before_varargs = False
+        value = parsed[spec.name]
+        if positional_before and before_varargs and spec.kind in (
+            ParamKind.POSITIONAL_ONLY, ParamKind.POSITIONAL_OR_KEYWORD
+        ):
+            call.args.append(spec.default if value is _OMIT else value)
+            continue
+        try:
+            call.add(spec, value)
         except ValueError as ex:
             errors[spec.name] = str(ex)
     if errors:
@@ -443,6 +484,12 @@ def _convert(spec: ParamSpec, raw: FormValue) -> Any:
             return str(raw)
         case FieldKind.EXPRESSION:
             return _parse_expression(str(raw))
+        case FieldKind.DEVICE_ROWS:
+            def device_ok(name: str) -> bool:
+                return name in spec.choices or name in spec.component_choices.get(
+                    name.split(".", maxsplit=1)[0], ())
+
+            return parse_rows(str(raw), spec.row_columns, device_ok)
 
 
 def _parse_number[N: (int, float)](kind: type[N], text: str, what: str) -> N:
@@ -530,14 +577,18 @@ def to_form_value(spec: ParamSpec, value: Any) -> FormValue:
             if isinstance(value, str) and all(p.isidentifier() for p in value.split(".")):
                 return value  # a device or plan name: show it bare
             return repr(value)
+        case FieldKind.DEVICE_ROWS:
+            return repr(list(value))
 
 
 def _bind(plan: PlanSpec, args: list[Any], kwargs: dict[str, Any]) -> dict[str, Any]:
     bound: dict[str, Any] = {}
-    positional = [
-        p for p in plan.params
-        if p.kind in (ParamKind.POSITIONAL_ONLY, ParamKind.POSITIONAL_OR_KEYWORD)
-    ]
+    positional = []
+    for p in plan.params:  # only parameters before *args can take positional values
+        if p.kind is ParamKind.VAR_POSITIONAL:
+            break
+        if p.kind in (ParamKind.POSITIONAL_ONLY, ParamKind.POSITIONAL_OR_KEYWORD):
+            positional.append(p)
     for spec, value in zip(positional, args, strict=False):
         bound[spec.name] = value
     extra_args = args[len(positional):]

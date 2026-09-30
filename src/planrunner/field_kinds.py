@@ -16,3 +16,5 @@ class FieldKind(StrEnum):
     """Pick several names."""
     EXPRESSION = "expression"
     """A Python literal (number, list, dict, ...) or a bare device/plan name."""
+    DEVICE_ROWS = "device_rows"
+    """Repeated device -> value rows for ``*args`` patterns (mv, scan, grid_scan...)."""

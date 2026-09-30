@@ -1,3 +1,5 @@
+import inspect
+
 import pytest
 
 from planrunner.plan_params import (
@@ -249,3 +251,51 @@ def test_literal_parameter_is_a_choice_that_sends_the_typed_value():
     item = build_item(spec, {"mode": "linear", "binning": "4", "exposure": "0.5"})
     assert item["kwargs"] == {"mode": "linear", "binning": 4, "exposure": 0.5}
     assert form_values(spec, item)["binning"] == "4"
+
+
+SCAN = {"name": "scan", "parameters": [
+    kw("detectors", annotation={"type": "collections.abc.Sequence[__READABLE__]"}),
+    {"name": "args", "kind": {"name": "VAR_POSITIONAL"}},
+    {"name": "num", "kind": {"name": "KEYWORD_ONLY"}, "annotation": {"type": "int | None"},
+     "default": "None"}]}
+
+
+def test_scan_args_become_motor_rows():
+    catalog = Catalog.from_allowed(TREE_DEVICES, plans=[])
+    spec = describe_plan(SCAN, catalog)
+    rows = spec.param("args")
+    assert rows.field_kind is FieldKind.DEVICE_ROWS
+    assert [c.name for c in rows.row_columns] == ["motor", "start", "stop"]
+    item = build_item(spec, {"detectors": ["det1"], "args": "['theta', 0.0, 10.0]", "num": "5"})
+    # detectors must be positional once *args is filled, or 'theta' would bind to it
+    assert item == {
+        "item_type": "plan", "name": "scan",
+        "args": [["det1"], "theta", 0.0, 10.0],
+        "kwargs": {"num": 5},
+    }
+    assert form_values(spec, item)["args"] == "['theta', 0.0, 10.0]"
+
+
+def test_calling_the_built_item_binds_like_python():
+    """The item must bind to the real signature exactly as the worker will call it."""
+    def scan(detectors, *args, num=None, md=None):
+        yield None
+
+    catalog = Catalog.from_allowed(TREE_DEVICES, plans=[])
+    spec = describe_plan(SCAN, catalog)
+    item = build_item(spec, {"detectors": ["det1"], "args": "['theta', 0, 1]", "num": "3"})
+    bound = inspect.signature(scan).bind(*item["args"], **item["kwargs"])
+    assert bound.arguments["detectors"] == ["det1"]
+    assert bound.arguments["args"] == ("theta", 0, 1)
+    assert name_conversion_warnings(spec, item, catalog) == {}  # motors are intended
+
+
+def test_bad_rows_are_reported_by_row_and_column():
+    catalog = Catalog.from_allowed(TREE_DEVICES, plans=[])
+    spec = describe_plan(SCAN, catalog)
+    with pytest.raises(PlanInputError) as info:
+        build_item(spec, {"detectors": ["det1"], "args": "['theta', 0.0, 'far']"})
+    assert info.value.errors["args"] == "row 1, stop: 'far' is not a number"
+    with pytest.raises(PlanInputError) as info:
+        build_item(spec, {"detectors": ["det1"], "args": "['det1', 0, 1]"})
+    assert "not an allowed movable device" in info.value.errors["args"]

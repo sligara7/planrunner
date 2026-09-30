@@ -5,6 +5,7 @@ name | [type] | input | help. The Plan parameters panel and Task Details both us
 Supporting a new kind of parameter means one widget class and one table entry.
 """
 
+import ast
 from collections.abc import Callable, Mapping
 from typing import Protocol
 
@@ -18,6 +19,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -177,6 +180,87 @@ class MultiChoiceField:
             item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
 
 
+class DeviceRowsField:
+    """One row per motor for mv / scan / grid_scan-style ``*args``: a device (or component)
+    and the pattern's values, with rows added and removed by the operator."""
+
+    def __init__(self, spec: ParamSpec) -> None:
+        self._spec = spec
+        self.widget_ = QWidget()
+        outer = QVBoxLayout(self.widget_)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self._rows_box = QVBoxLayout()
+        outer.addLayout(self._rows_box)
+        add = QPushButton(f"+ Add {spec.row_columns[0].name}")
+        add.clicked.connect(lambda: self._add_row())  # noqa: PLW0108 - drop Qt's 'checked'
+        outer.addWidget(add, 0, Qt.AlignmentFlag.AlignLeft)
+        self._rows: list[tuple[QWidget, DevicePathField, list[QLineEdit]]] = []
+        self._add_row()
+
+    @property
+    def widget(self) -> QWidget:
+        return self.widget_
+
+    def get(self) -> FormValue:
+        values: list[object] = []
+        for _, device, edits in self._rows:
+            name = str(device.get())
+            texts = [e.text().strip() for e in edits]
+            if not name and not any(texts):
+                continue  # an empty row
+            values.append(name)
+            values += [_literal_or_text(t) for t in texts]
+        return repr(values) if values else ""
+
+    def set(self, value: FormValue) -> None:
+        for row, _, _ in list(self._rows):
+            self._remove_row(row)
+        try:
+            flat = ast.literal_eval(str(value)) if value else []
+        except (ValueError, SyntaxError):
+            flat = []
+        width = len(self._spec.row_columns)
+        for start in range(0, len(flat) - width + 1, width):
+            chunk = flat[start:start + width]
+            self._add_row(str(chunk[0]), [repr(v) for v in chunk[1:]])
+        if not self._rows:
+            self._add_row()
+
+    def _add_row(self, device: str = "", values: list[str] | None = None) -> None:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        picker = DevicePathField(self._spec)
+        picker.set(device)
+        layout.addWidget(picker.widget)
+        edits = []
+        for i, column in enumerate(self._spec.row_columns[1:]):
+            edit = QLineEdit(values[i] if values and i < len(values) else "")
+            edit.setPlaceholderText("[0, 1, 2]" if column.kind == "positions" else column.name)
+            edit.setFixedWidth(110 if column.kind != "positions" else 160)
+            layout.addWidget(edit)
+            edits.append(edit)
+        remove = QPushButton("✕")
+        remove.setFixedWidth(28)
+        remove.clicked.connect(lambda: self._remove_row(row))
+        layout.addWidget(remove)
+        layout.addStretch(1)
+        self._rows_box.addWidget(row)
+        self._rows.append((row, picker, edits))
+
+    def _remove_row(self, row: QWidget) -> None:
+        self._rows = [r for r in self._rows if r[0] is not row]
+        row.setParent(None)
+        row.deleteLater()
+
+
+def _literal_or_text(text: str) -> object:
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        return text
+
+
 def _expression_field(spec: ParamSpec) -> FieldWidget:
     return ChoiceField(spec) if spec.choices else TextField(spec, width=240)
 
@@ -195,6 +279,7 @@ DEFAULT_FACTORIES: Mapping[FieldKind, FieldFactory] = {
     FieldKind.CHOICE: _choice_field,
     FieldKind.MULTI_CHOICE: MultiChoiceField,
     FieldKind.EXPRESSION: _expression_field,
+    FieldKind.DEVICE_ROWS: DeviceRowsField,
 }
 
 
